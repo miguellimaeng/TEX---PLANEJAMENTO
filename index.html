@@ -417,7 +417,7 @@ function searchBases(q,{limit=40,kind=null,bases=null}={}){
 /* ---------- importação de bases (SINAPI / SICRO / planilha própria) ---------- */
 const H=v=>na(v).replace(/\s+/g," ");
 function findHeader(aoa){ for(let r=0;r<Math.min(aoa.length,30);r++){ const row=(aoa[r]||[]).map(H); const ci=row.findIndex(c=>/^cod|codigo|^cod\.|^code/.test(c)); const di=row.findIndex(c=>/descri/.test(c)); if(ci>=0&&di>=0) return r; } return -1; }
-function sheetKind(name,hdr){ const h=hdr.join(" | "); if(/coeficiente|coef\b/.test(h)) return "analitico"; if(/composi/.test(h)||/^c(sd|cd|se)$|composi|sintetic/.test(H(name))) return "comp"; return "ins"; }
+function sheetKind(name,hdr){ const h=hdr.join(" | "); if(/coeficiente|coef\b/.test(h)) return "analitico"; if(/composi|custo total|custo unitario total/.test(h)||/^c(sd|cd|se)$|composi|sintetic/.test(H(name))) return "comp"; if(/preco mediano|insumo/.test(h)) return "ins"; if(/^i(sd|cd|se)$|insumo/.test(H(name))) return "ins"; return /custo/.test(h)?"comp":"ins"; }
 function priceCol(aoa,r,uf){ const u=na(uf); for(const rr of [r,r-1,r-2,r-3,r-4,r+1,r+2,r+3]){ const row=(aoa[rr]||[]).map(H); const i=row.findIndex(c=>c===u||c===u+" "||c==="preco "+u||c==="custo "+u||c===u+" (r$)"); if(i>=0) return {i,why:`coluna ${uf.toUpperCase()}`}; }
   const row=(aoa[r]||[]).map(H); const pref=[/preco mediano/,/custo total/,/preco unit|custo unit|valor unit/,/^custo( \(r\$\))?$|^preco( \(r\$\))?$|^valor/,/preco|custo|valor/];
   for(const re of pref){ const i=row.findIndex(c=>re.test(c)&&!/%|percent|origem/.test(c)); if(i>=0) return {i,why:`coluna “${aoa[r][i]}”`}; } return {i:-1,why:"sem coluna de preço"}; }
@@ -451,11 +451,18 @@ async function importBaseFiles(files,opt,onProg=()=>{}){
         rep.push({file:f.name,sheet:name,kind:"Analítico (composições × insumos)",n,price:"—"}); continue; }
       const cC=colIdx(hdr,[/^cod|codigo/]), cD=colIdx(hdr,[/descri/]), cU=colIdx(hdr,[/^unid|unidade|^und|^un$/]), cG=colIdx(hdr,[/^grupo|classe|classifica|tipo/]); const pc=priceCol(aoa,r,uf);
       for(let i=r+1;i<aoa.length;i++){ const row=aoa[i]; if(!row) continue; const code=row[cC]!=null?String(row[cC]).trim():""; const d=row[cD]!=null?String(row[cD]).trim():""; if(!code||!d||/^cod/i.test(code)) continue;
-        const p=pc.i>=0?parseNum(row[pc.i]):null; const u=cU>=0&&row[cU]!=null?String(row[cU]).trim():""; const g=cG>=0&&row[cG]!=null?String(row[cG]).trim():"";
+        const p=pc.i>=0?parseNum(row[pc.i]):null; const u=cU>=0&&row[cU]!=null?String(row[cU]).trim():""; const g=cG>=0&&row[cG]!=null?String(row[cG]).trim().replace(/^[A-Z0-9]{2,6}\s{2,}/,"").replace(/\s+/g," "):"";
         if(kind==="comp"){ const ex=b.comp[code]; if(ex){ ex[0]=ex[0]||d; ex[1]=ex[1]||u; ex[2]=p; ex[3]=ex[3]||g; } else b.comp[code]=[d,u,p,g,[]]; }
         else { b.ins[code]=[d,u,p,tipoFromText(g+" "+u)]; } n++; }
       rep.push({file:f.name,sheet:name,kind:kind==="comp"?"Composições (custo sintético)":"Insumos",n,price:pc.why}); } }
-  return {base:b,rep}; }
+  dewrap(b); return {base:b,rep}; }
+/* descrições extraídas de PDF chegam com quebras de linha no meio das palavras ("JUN\nTA"); junta usando o vocabulário da própria base */
+function dewrap(b){ const all=[]; for(const c in b.comp) all.push(b.comp[c]); for(const c in b.ins) all.push(b.ins[c]); if(!all.some(x=>String(x[0]).includes("\n"))) return;
+  const voc={}; const tk=s=>s.split(/[^0-9A-Za-zÀ-ÿ]+/).filter(Boolean);
+  all.forEach(x=>String(x[0]).split("\n").forEach(line=>{ const t=tk(line); t.slice(1,-1).forEach(w=>voc[w]=(voc[w]||0)+1); if(!String(x[0]).includes("\n")) t.forEach(w=>voc[w]=(voc[w]||0)+1); }));
+  const join=(a,bb)=>{ if(/^[)\],.;:\/-]/.test(bb)||/[(\[\/-]$/.test(a)) return a+bb; const ma=a.match(/([0-9A-Za-zÀ-ÿ]+)$/), mb=bb.match(/^([0-9A-Za-zÀ-ÿ]+)/); if(!ma||!mb) return a+" "+bb;
+    const w=ma[1]+mb[1], ia=!!voc[ma[1]], ib=!!voc[mb[1]], iw=voc[w]||0; if(iw&&(!ia||!ib)) return a+bb; if(iw>=2&&iw>=Math.min(voc[ma[1]]||0,voc[mb[1]]||0)) return a+bb; if(/^\d+$/.test(ma[1])&&/^\d+$/.test(mb[1])) return a+bb; return a+" "+bb; };
+  all.forEach(x=>{ const s=String(x[0]); if(!s.includes("\n")) return; x[0]=s.split("\n").map(z=>z.trim()).filter(Boolean).reduce((acc,l)=>acc?join(acc,l):l,""); }); }
 function guessRef(name){ const n=String(name); let m=n.match(/(20\d{2})[_\-. ]?(0[1-9]|1[0-2])/); if(m) return `${m[2]}/${m[1]}`; m=n.match(/(0[1-9]|1[0-2])[_\-. ]?(20\d{2})/); if(m) return `${m[1]}/${m[2]}`; return ""; }
 
 /* ================= Orçamentos ================= */
@@ -741,9 +748,9 @@ function importBaseDialog(){ const m=modal("Importar base de preços",`<div clas
     const tgt=$("#ibT",mm).value; let base=null; if(tgt) base=await loadBase(tgt);
     try{ const {base:b,rep}=await importBaseFiles(files,{base,fonte:F,uf:U,ref:R,deson:D,nome:`${F==="OUTRA"?"Base importada":F} ${U} ${R||""}${F==="SINAPI"?(D?" desonerada":" não desonerada"):""}`.trim()},t=>out.textContent=t);
       const nI=Object.keys(b.ins).length, nC=Object.keys(b.comp).length; if(!nI&&!nC){ out.innerHTML=`<div class="notice">Não reconheci insumos nem composições. Confira se a planilha tem colunas de código, descrição e preço.</div>`+repHTML(rep); btn.disabled=false; return false; }
-      await saveBase(b); out.innerHTML=`<div class="alert ok">Base salva: ${nf(nI,0)} insumos e ${nf(nC,0)} composições.</div>`+repHTML(rep); btn.textContent="Concluído"; btn.disabled=false; btn.onclick=()=>{ mm.close(); rerender(); }; return false;
+      await saveBase(b); let exOff=false; if(F==="SINAPI"){ const ex=S.basesMeta.find(x=>x.fonte==="EXEMPLO"&&x.ativo); if(ex){ ex.ativo=false; exOff=true; await saveNow("basesMeta"); } } out.innerHTML=`<div class="alert ok">Base salva: ${nf(nI,0)} insumos e ${nf(nC,0)} composições.${exOff?" A base de exemplo foi desligada das buscas.":""}</div>${!nI&&nC?`<div class="notice" style="margin-top:8px">Este arquivo traz só o custo total de cada composição (relatório sintético). Os orçamentos já funcionam com ele; para ver os insumos de cada composição e a curva ABC de insumos, importe também o relatório analítico do mesmo mês.</div>`:""}`+repHTML(rep); btn.textContent="Concluído"; btn.disabled=false; btn.onclick=()=>{ mm.close(); rerender(); }; return false;
     }catch(e){ console.error(e); out.innerHTML=e.code==="lib"?`<div class="notice">Não consegui carregar o leitor de planilhas. Confira a conexão com a internet e tente de novo. No app instalado, confira também se a pasta <span class="mono">lib</span> foi enviada ao GitHub.</div>`:`<div class="notice">O leitor abriu, mas não conseguiu interpretar este arquivo (${esc(String(e.message||e).slice(0,120))}). Se puder, me envie a planilha para eu ajustar a importação.</div>`; btn.disabled=false; return false; } }}]);
-  $("#ibFile",m).onchange=e=>{ const f=e.target.files[0]; if(f&&!$("#ibR",m).value) $("#ibR",m).value=guessRef(f.name); }; }
+  $("#ibFile",m).onchange=e=>{ const f=e.target.files[0]; if(!f) return; if(!$("#ibR",m).value) $("#ibR",m).value=guessRef(f.name); const n=na(f.name).replace(/[^a-z]/g,""); if(/naodesonerad|semdesonera|nao_deson/.test(n)) $("#ibD",m).value="0"; else if(/desonerad/.test(n)) $("#ibD",m).value="1"; const uf=(f.name.toUpperCase().match(/(?:^|[_\-\s])(AC|AL|AM|AP|BA|CE|DF|ES|GO|MA|MG|MS|MT|PA|PB|PE|PI|PR|RJ|RN|RO|RR|RS|SC|SE|SP|TO)(?=[_\-\s.])/)||[])[1]; if(uf) $("#ibU",m).value=uf; }; }
 function repHTML(rep){ return `<div class="tw" style="margin-top:8px"><table class="t"><thead><tr><th>Aba</th><th>Lida como</th><th class="n">Linhas</th><th>Preço</th></tr></thead><tbody>${rep.map(r=>`<tr><td>${esc(r.sheet)}</td><td>${esc(r.kind||r.skip)}</td><td class="n">${r.n!=null?nf(r.n,0):"—"}</td><td class="small">${esc(r.price||"")}</td></tr>`).join("")}</tbody></table></div>`; }
 
 /* ---------- Composições (CPU) ---------- */
