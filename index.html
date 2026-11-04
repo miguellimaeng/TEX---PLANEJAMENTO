@@ -300,12 +300,16 @@ async function saveFile(name,blob){
 function pickFile(accept){ return new Promise(res=>{ const i=document.createElement("input"); i.type="file"; i.accept=accept; i.onchange=()=>res(i.files[0]||null); i.click(); }); }
 
 /* bibliotecas carregadas sob demanda */
-const LIBS=window.__TEX_LIBS||{
-  xlsx:"https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js",
-  jspdf:"https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js",
-  autotable:"https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js" };
+/* bibliotecas: tenta a cópia local (app instalado) e depois três CDNs diferentes */
+const CDN={
+  xlsx:["https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js","https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js","https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"],
+  jspdf:["https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js","https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js","https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"],
+  autotable:["https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js","https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js","https://unpkg.com/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"]};
+const LIBS={}; for(const k in CDN) LIBS[k]=(window.__TEX_LIBS&&window.__TEX_LIBS[k]?[window.__TEX_LIBS[k]]:[]).concat(CDN[k]);
 const libP={};
-function loadLib(k){ if(libP[k]) return libP[k]; libP[k]=new Promise((res,rej)=>{ const s=document.createElement("script"); s.src=LIBS[k]; s.onload=()=>res(); s.onerror=()=>{ libP[k]=null; rej(new Error("lib "+k)); }; document.head.appendChild(s); }); return libP[k]; }
+const LIBOK={xlsx:()=>!!window.XLSX,jspdf:()=>!!window.jspdf,autotable:()=>!!(window.jspdf&&window.jspdf.jsPDF.API.autoTable)};
+function loadOne(url){ return new Promise((res,rej)=>{ const s=document.createElement("script"); s.src=url; s.onload=()=>res(); s.onerror=()=>{ s.remove(); rej(); }; document.head.appendChild(s); }); }
+function loadLib(k){ if(libP[k]) return libP[k]; libP[k]=(async()=>{ for(const u of LIBS[k]){ try{ await loadOne(u); if(LIBOK[k]()) return; }catch(e){} } libP[k]=null; const err=new Error("lib "+k); err.code="lib"; throw err; })(); return libP[k]; }
 async function needXLSX(){ if(!window.XLSX) await loadLib("xlsx"); return window.XLSX; }
 async function needPDF(){ if(!window.jspdf) await loadLib("jspdf"); if(!window.jspdf.jsPDF.API.autoTable) await loadLib("autotable"); return window.jspdf.jsPDF; }
 
@@ -738,7 +742,7 @@ function importBaseDialog(){ const m=modal("Importar base de preços",`<div clas
     try{ const {base:b,rep}=await importBaseFiles(files,{base,fonte:F,uf:U,ref:R,deson:D,nome:`${F==="OUTRA"?"Base importada":F} ${U} ${R||""}${F==="SINAPI"?(D?" desonerada":" não desonerada"):""}`.trim()},t=>out.textContent=t);
       const nI=Object.keys(b.ins).length, nC=Object.keys(b.comp).length; if(!nI&&!nC){ out.innerHTML=`<div class="notice">Não reconheci insumos nem composições. Confira se a planilha tem colunas de código, descrição e preço.</div>`+repHTML(rep); btn.disabled=false; return false; }
       await saveBase(b); out.innerHTML=`<div class="alert ok">Base salva: ${nf(nI,0)} insumos e ${nf(nC,0)} composições.</div>`+repHTML(rep); btn.textContent="Concluído"; btn.disabled=false; btn.onclick=()=>{ mm.close(); rerender(); }; return false;
-    }catch(e){ console.error(e); out.innerHTML=`<div class="notice">Não consegui ler o arquivo${e.message&&/lib/.test(e.message)?": o leitor de planilhas precisa de internet na primeira vez":""}. Tente salvar como .xlsx.</div>`; btn.disabled=false; return false; } }}]);
+    }catch(e){ console.error(e); out.innerHTML=e.code==="lib"?`<div class="notice">Não consegui carregar o leitor de planilhas. Confira a conexão com a internet e tente de novo. No app instalado, confira também se a pasta <span class="mono">lib</span> foi enviada ao GitHub.</div>`:`<div class="notice">O leitor abriu, mas não conseguiu interpretar este arquivo (${esc(String(e.message||e).slice(0,120))}). Se puder, me envie a planilha para eu ajustar a importação.</div>`; btn.disabled=false; return false; } }}]);
   $("#ibFile",m).onchange=e=>{ const f=e.target.files[0]; if(f&&!$("#ibR",m).value) $("#ibR",m).value=guessRef(f.name); }; }
 function repHTML(rep){ return `<div class="tw" style="margin-top:8px"><table class="t"><thead><tr><th>Aba</th><th>Lida como</th><th class="n">Linhas</th><th>Preço</th></tr></thead><tbody>${rep.map(r=>`<tr><td>${esc(r.sheet)}</td><td>${esc(r.kind||r.skip)}</td><td class="n">${r.n!=null?nf(r.n,0):"—"}</td><td class="small">${esc(r.price||"")}</td></tr>`).join("")}</tbody></table></div>`; }
 
