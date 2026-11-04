@@ -1,2 +1,29 @@
-{"name":"TEX Orçamentos","short_name":"TEX Orçam.","description":"Orçamento de obras da TEX Engenharia & Inovação","start_url":"./","scope":"./","display":"standalone","background_color":"#F2F5F7","theme_color":"#0A486B","lang":"pt-BR",
-"icons":[{"src":"icons/icon-192.png","sizes":"192x192","type":"image/png"},{"src":"icons/icon-512.png","sizes":"512x512","type":"image/png"},{"src":"icons/icon-maskable-512.png","sizes":"512x512","type":"image/png","purpose":"maskable"}]}
+{
+ "name": "Obra360° — TEX Engenharia & Inovação",
+ "short_name": "Obra360°",
+ "description": "Orçamento, planejamento, compras e financeiro de obras — TEX Engenharia & Inovação",
+ "start_url": "./",
+ "scope": "./",
+ "display": "standalone",
+ "background_color": "#F2F5F7",
+ "theme_color": "#0A486B",
+ "lang": "pt-BR",
+ "icons": [
+  {
+   "src": "icons/icon-192.png",
+   "sizes": "192x192",
+   "type": "image/png"
+  },
+  {
+   "src": "icons/icon-512.png",
+   "sizes": "512x512",
+   "type": "image/png"
+  },
+  {
+   "src": "icons/icon-maskable-512.png",
+   "sizes": "512x512",
+   "type": "image/png",
+   "purpose": "maskable"
+  }
+ ]
+}

@@ -1,6 +1,6 @@
-# TEX Orçamentos — app para celular e computador (PWA)
+# Obra360° — app para celular e computador (PWA)
 
-Plataforma de orçamento de obras da TEX Engenharia & Inovação, para publicar no GitHub Pages, do mesmo jeito que o Rumo 90.
+Plataforma de gestão de obras da TEX Engenharia & Inovação: orçamento, planejamento, compras e financeiro, para publicar no GitHub Pages, do mesmo jeito que o Rumo 90.
 
 ## Arquivos
 
@@ -16,10 +16,10 @@ Envie tudo para a raiz do repositório, mantendo as pastas `icons` e `lib`.
 
 ## Publicar no GitHub Pages
 
-1. Crie um repositório público, por exemplo `tex-orcamentos`.
+1. Crie um repositório público, por exemplo `obra360`.
 2. **Add file › Upload files**: arraste todos os arquivos e as pastas `icons` e `lib`, e confirme em **Commit changes**.
 3. **Settings › Pages**: *Deploy from a branch*, branch **main**, pasta **/ (root)**, **Save**.
-4. Em um ou dois minutos o endereço aparece: `https://SEU-USUARIO.github.io/tex-orcamentos/`.
+4. Em um ou dois minutos o endereço aparece: `https://SEU-USUARIO.github.io/obra360/`.
 
 ## Instalar
 
