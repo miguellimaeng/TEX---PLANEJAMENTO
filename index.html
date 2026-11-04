@@ -376,6 +376,7 @@ const costCache={};
 function insPrice(b,cod){ const x=b.ins[cod]; if(x&&x[2]!=null) return x[2]; for(const id in BASES){ if(id!==b.id&&BASES[id].ins[cod]&&BASES[id].ins[cod][2]!=null) return BASES[id].ins[cod][2]; } return null; }
 function compCost(b,cod,depth=0){ const cc=costCache[b.id]||(costCache[b.id]={}); if(cod in cc) return cc[cod];
   const c=b.comp[cod]; if(!c) return null; if(depth>12) return c[2];
+  if(c[2]!=null&&b.fonte!=="PROPRIA"){ cc[cod]=c[2]; return c[2]; } /* custo oficial publicado tem prioridade */
   let tot=null; const it=c[4]||[];
   if(it.length){ tot=0; for(const [t,ic,k] of it){ const p=t==="C"?(b.comp[ic]?compCost(b,ic,depth+1):null):insPrice(b,ic); if(p==null){ tot=null; break; } tot+=k*p; } }
   if(tot==null) tot=c[2]; cc[cod]=tot==null?null:Math.round(tot*10000)/10000; return cc[cod]; }
@@ -427,12 +428,12 @@ async function importBaseFiles(files,opt,onProg=()=>{}){
   const XLSX=await needXLSX(); const b=opt.base||{id:"b"+uid(),nome:opt.nome,fonte:opt.fonte,uf:opt.uf,ref:opt.ref,deson:opt.deson,ins:{},comp:{}};
   const rep=[]; const uf=opt.uf||"SC";
   for(const f of files){ onProg(`Lendo ${f.name}…`); const buf=await f.arrayBuffer(); await new Promise(r=>setTimeout(r,20));
-    const wb=XLSX.read(buf,{type:"array",dense:true,cellDates:false});
+    const wb=XLSX.read(buf,{type:"array",dense:true,cellDates:false,cellFormula:true}); fixHyperlinkCodes(wb);
     const names=wb.SheetNames; const sinapiNew=names.some(n=>/^(i|c)(sd|cd|se)$/i.test(n.trim()));
     const want=opt.deson?"cd":"sd";
     for(const name of names){ const nm=H(name);
       if(sinapiNew&&/^(i|c)(sd|cd|se)$/.test(nm)&&nm.slice(1)!==want){ rep.push({file:f.name,sheet:name,skip:`ignorada (${nm.slice(1)==="se"?"sem encargos":nm.slice(1)==="cd"?"desonerada":"não desonerada"})`}); continue; }
-      if(/menu|capa|instru|leia|indice|sumario|familia|manutencao|mao de obra/.test(nm)&&!/^(i|c)(sd|cd)/.test(nm)){ rep.push({file:f.name,sheet:name,skip:"ignorada"}); continue; }
+      if((/menu|capa|instru|leia|indice|sumario|familia|manutencao|mao de obra|^busca|com custo/.test(nm))&&!/^(i|c)(sd|cd)$/.test(nm)){ rep.push({file:f.name,sheet:name,skip:"ignorada"}); continue; }
       onProg(`Processando ${name}…`); await new Promise(r=>setTimeout(r,10));
       const aoa=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,raw:true,defval:null,blankrows:false});
       const r=findHeader(aoa); if(r<0){ rep.push({file:f.name,sheet:name,skip:"sem cabeçalho reconhecido"}); continue; }
@@ -463,6 +464,8 @@ function dewrap(b){ const all=[]; for(const c in b.comp) all.push(b.comp[c]); fo
   const join=(a,bb)=>{ if(/^[)\],.;:\/-]/.test(bb)||/[(\[\/-]$/.test(a)) return a+bb; const ma=a.match(/([0-9A-Za-zÀ-ÿ]+)$/), mb=bb.match(/^([0-9A-Za-zÀ-ÿ]+)/); if(!ma||!mb) return a+" "+bb;
     const w=ma[1]+mb[1], ia=!!voc[ma[1]], ib=!!voc[mb[1]], iw=voc[w]||0; if(iw&&(!ia||!ib)) return a+bb; if(iw>=2&&iw>=Math.min(voc[ma[1]]||0,voc[mb[1]]||0)) return a+bb; if(/^\d+$/.test(ma[1])&&/^\d+$/.test(mb[1])) return a+bb; return a+" "+bb; };
   all.forEach(x=>{ const s=String(x[0]); if(!s.includes("\n")) return; x[0]=s.split("\n").map(z=>z.trim()).filter(Boolean).reduce((acc,l)=>acc?join(acc,l):l,""); }); }
+/* planilhas da Caixa trazem os códigos como fórmula HYPERLINK(...;código); quando o valor guardado vem zerado, pega o código da fórmula */
+function fixHyperlinkCodes(wb){ for(const n of wb.SheetNames){ const ws=wb.Sheets[n]; const rows=ws["!data"]||ws; for(const k of Object.keys(rows)){ const row=rows[k]; if(!Array.isArray(row)) continue; for(const c of row){ if(!c||!c.f||!/^HYPERLINK\(/i.test(c.f)) continue; if(c.v!==0&&c.v!==""&&c.v!=null) continue; const m=c.f.match(/[,;]\s*"?([^",;()]+?)"?\s*\)\s*$/); if(m){ c.v=m[1].trim(); c.t="s"; c.w=c.v; } } } } }
 function guessRef(name){ const n=String(name); let m=n.match(/(20\d{2})[_\-. ]?(0[1-9]|1[0-2])/); if(m) return `${m[2]}/${m[1]}`; m=n.match(/(0[1-9]|1[0-2])[_\-. ]?(20\d{2})/); if(m) return `${m[1]}/${m[2]}`; return ""; }
 
 /* ================= Orçamentos ================= */
