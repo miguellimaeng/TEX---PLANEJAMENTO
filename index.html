@@ -196,7 +196,7 @@ svg.chart .grid{stroke:var(--line2)}
     <div class="grp">Obra</div>
     <a href="#planejamento" data-nav="planejamento"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="7" height="6" rx="1"/><rect x="14" y="14" width="7" height="6" rx="1"/><path d="M6.5 10v4a3 3 0 0 0 3 3H14"/></svg>Planejamento</a>
     <a href="#ajustes" data-nav="ajustes"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>Ajustes</a>
-    <div class="foot">Versão 1.0 · dados guardados neste aparelho</div>
+    <div class="foot">Versão 1.1 · dados guardados neste aparelho</div>
   </nav>
   <div style="min-width:0">
     <header class="topbar"><button id="menuBt" aria-label="Abrir menu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button><img id="topLogo" alt=""><b>TEX Orçamentos</b></header>
@@ -259,10 +259,10 @@ const IC={
 
 /* ---------- armazenamento (local agora; nuvem depois troca só esta camada) ---------- */
 const Store=(()=>{ let dbp=null; const NAME="tex-orcamentos";
-  function open(){ if(dbp) return dbp; dbp=new Promise((res,rej)=>{ let r; try{ r=indexedDB.open(NAME,1); }catch(e){ rej(e); return; }
-    r.onupgradeneeded=()=>{ const d=r.result; if(!d.objectStoreNames.contains("kv")) d.createObjectStore("kv"); if(!d.objectStoreNames.contains("bases")) d.createObjectStore("bases"); };
+  function open(){ if(dbp) return dbp; dbp=new Promise((res,rej)=>{ let r; try{ r=indexedDB.open(NAME,2); }catch(e){ rej(e); return; }
+    r.onupgradeneeded=()=>{ const d=r.result; if(!d.objectStoreNames.contains("kv")) d.createObjectStore("kv"); if(!d.objectStoreNames.contains("bases")) d.createObjectStore("bases"); if(!d.objectStoreNames.contains("blobs")) d.createObjectStore("blobs"); };
     r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); return dbp; }
-  const mem={kv:{},bases:{}}; let ok=true;
+  const mem={kv:{},bases:{},blobs:{}}; let ok=true;
   async function tx(store,mode,fn){ try{ const d=await open(); return await new Promise((res,rej)=>{ const t=d.transaction(store,mode), s=t.objectStore(store); const q=fn(s); t.oncomplete=()=>res(q&&q.result); t.onerror=()=>rej(t.error); t.onabort=()=>rej(t.error); }); }catch(e){ ok=false; throw e; } }
   return {
     get ok(){ return ok; },
@@ -851,8 +851,277 @@ function viewPainel(){ const by=s=>S.orcs.filter(o=>o.status===s); const sum=L=>
   ${sinapi.length?"":`<div class="notice">A SINAPI de Santa Catarina ainda não foi importada. Enquanto isso, o app usa uma base de exemplo com valores ilustrativos. <a href="#bases">Importar a SINAPI-SC</a></div>`}
   <div class="grid2"><div class="card"><h3>Orçamentos recentes</h3><div class="list">${S.orcs.slice().sort((a,b)=>b.atualizado-a.atualizado).slice(0,6).map(o=>`<a class="li" href="#orc-${o.id}" style="text-decoration:none;color:inherit"><div style="min-width:0"><b>${esc(o.nome)}</b><div class="small muted">${esc(o.num)} · ${esc(cliName(o.clienteId)||"sem cliente")}</div></div><div style="text-align:right">${stPill(o.status)}<div class="num">${brl(calcOrc(o).tot)}</div></div></a>`).join("")||'<div class="muted">Nenhum orçamento ainda.</div>'}</div></div>
   <div class="card"><h3>Bases ativas</h3><div class="list">${activeBases().map(m=>`<div class="li"><div><b>${esc(m.nome)}</b><div class="small muted">${nf(m.nIns,0)} insumos · ${nf(m.nComp,0)} composições</div></div><span class="src">${esc(srcLabel(m.fonte))}</span></div>`).join("")||'<div class="muted">Nenhuma base ativa.</div>'}</div></div></div>
+  ${S.plans.length?`<div class="card"><h3>Obras em andamento</h3><div class="list">${S.plans.map(p=>{ migratePlan(p); const sc=schedule(p); const pv=planejadoAte(p,sc,today()), rl=realizadoDe(p,avancoAtual(p)); return `<a class="li" href="#plano-${p.id}" style="text-decoration:none;color:inherit"><div style="min-width:0;flex:1"><b>${esc(p.nome)}</b><div class="small muted">término previsto ${dbr(sc.fim)} · ${pct(rl,0)} realizado · ${pct(pv,0)} previsto</div><div class="bar" style="margin-top:6px;max-width:420px"><i style="width:${(rl*100).toFixed(1)}%"></i></div></div>${!p.medicoes.length?'<span class="pill info">sem medição</span>':rl>=pv-0.02?'<span class="pill ok">no prazo</span>':rl>=pv-0.08?'<span class="pill warn">atenção</span>':'<span class="pill bad">atrasada</span>'}</a>`; }).join("")}</div></div>`:""}
   <h2 style="margin-top:6px">O que a plataforma faz</h2><div class="feat">${FEATS.map(([ic,t,d,h])=>`<a href="#${h}"><span class="ic">${I(IC[ic])}</span><span><b>${t}</b><small>${d}</small></span></a>`).join("")}</div>`; }
 function bindPainel(){ $("#pnNovo").onclick=()=>{ const o=newOrc(); S.orcs.push(o); save("orcs"); go("orc-"+o.id); }; }
+
+/* ================= Planejamento de obras ================= */
+const addD=(s,n)=>{ const d=new Date(s+"T12:00:00"); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); };
+const diffD=(a,b)=>Math.round((new Date(b+"T12:00:00")-new Date(a+"T12:00:00"))/864e5);
+const dow=s=>new Date(s+"T12:00:00").getDay();
+const mondayOf=s=>{ const w=dow(s); return addD(s,w===0?-6:1-w); };
+const fmtDM=s=>s?`${s.slice(8,10)}/${s.slice(5,7)}`:"—";
+function easter(y){ const a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),mo=Math.floor((h+l-7*m+114)/31),da=((h+l-7*m+114)%31)+1; return `${y}-${String(mo).padStart(2,"0")}-${String(da).padStart(2,"0")}`; }
+function feriadosNac(y){ return ["01-01","04-21","05-01","09-07","10-12","11-02","11-15","11-20","12-25"].map(x=>`${y}-${x}`).concat([addD(easter(y),-2)]); }
+
+/* ---------- calendário e cálculo do cronograma (dias úteis, caminho crítico) ---------- */
+function calOf(p){ const fer=new Set(); const y0=+p.inicio.slice(0,4); for(let y=y0;y<=y0+4;y++) feriadosNac(y).forEach(d=>fer.add(d)); (p.cal?.feriados||[]).forEach(d=>fer.add(d));
+  const sab=!!p.cal?.sabado; const isW=s=>{ const w=dow(s); return !fer.has(s)&&w!==0&&(w!==6||sab); }; const days=[]; let d=p.inicio; while(!isW(d)) d=addD(d,1);
+  const idx=s=>{ if(s<=days[0]) return 0; let lo=0,hi=days.length-1; if(s>days[hi]) return hi+1; while(lo<hi){ const m=(lo+hi)>>1; if(days[m]<s) lo=m+1; else hi=m; } return lo; };
+  for(let i=0;i<2600;i++){ days.push(d); d=addD(d,1); while(!isW(d)) d=addD(d,1); } return {days,idx,isW,fer,date:i=>days[Math.max(0,Math.min(days.length-1,i))]}; }
+function schedule(p){ const cal=calOf(p); const T=p.tarefas; const byId=Object.fromEntries(T.map(t=>[t.id,t])); const warn=[];
+  const order=[], st={}; const visit=(t,path)=>{ if(st[t.id]===2) return; if(st[t.id]===1){ warn.push(`Dependência circular envolvendo “${t.nome}”; ela foi ignorada.`); return "cyc"; } st[t.id]=1;
+    t.deps=(t.deps||[]).filter(d=>byId[d.id]&&d.id!==t.id); for(const d of t.deps.slice()){ if(visit(byId[d.id])==="cyc") t.deps=t.deps.filter(x=>x!==d); } st[t.id]=2; order.push(t); };
+  T.forEach(t=>visit(t));
+  for(const t of order){ let es=t.fixo?cal.idx(t.fixo):0; for(const d of t.deps){ const pr=byId[d.id]; es=Math.max(es,pr._ef+1+(d.lag||0)); } es=Math.max(0,es); t._es=es; t._ef=es+Math.max(1,t.dur||1)-1; }
+  const end=Math.max(0,...T.map(t=>t._ef)); const succ={}; T.forEach(t=>t.deps.forEach(d=>(succ[d.id]=succ[d.id]||[]).push({t,lag:d.lag||0})));
+  for(const t of order.slice().reverse()){ let lf=end; (succ[t.id]||[]).forEach(s=>{ lf=Math.min(lf,s.t._ls-1-s.lag); }); t._lf=lf; t._ls=lf-Math.max(1,t.dur||1)+1; t._fol=t._ls-t._es; t._crit=t._fol<=0; }
+  T.forEach(t=>{ t._ini=cal.date(t._es); t._fim=cal.date(t._ef); }); return {cal,end,fim:cal.date(end),warn}; }
+/* previsto acumulado (fração do valor) até a data s */
+function planejadoAte(p,sc,s){ const T=p.tarefas, V=T.reduce((a,t)=>a+(t.valor||0),0)||T.length; const i=sc.cal.idx(s)+(sc.cal.isW(s)?1:0); let a=0;
+  T.forEach(t=>{ const v=V===T.length&&!T.some(x=>x.valor)?1:(t.valor||0); const d=Math.max(1,t.dur||1); const done=Math.max(0,Math.min(d,i-t._es)); a+=v*done/d; }); return a/V; }
+function avancoAtual(p){ const m=(p.medicoes||[]).slice().sort((a,b)=>a.data<b.data?-1:1).pop(); return m?m.av:{}; }
+function realizadoDe(p,av){ const T=p.tarefas, V=T.reduce((a,t)=>a+(t.valor||0),0); if(!V) return T.length?T.reduce((a,t)=>a+(av[t.id]||0)/100,0)/T.length:0; return T.reduce((a,t)=>a+(t.valor||0)*(av[t.id]||0)/100,0)/V; }
+
+/* ---------- criação a partir do orçamento ---------- */
+function newPlan(o={}){ return Object.assign({id:uid(),orcId:"",nome:"Nova obra",inicio:today(),cal:{sabado:false,feriados:[]},tarefas:[],medicoes:[],rdos:[],ppc:[],lob:null,criado:Date.now(),atualizado:Date.now()},o); }
+function migratePlan(p){ if(p.v===2) return p; p.cal=p.cal||{sabado:false,feriados:[]}; p.medicoes=p.medicoes||[]; p.rdos=p.rdos||[]; p.ppc=p.ppc||[]; p.lob=p.lob||null;
+  p.tarefas.forEach(t=>{ if(t.deps===undefined){ t.fixo=addD(p.inicio,t.ini||0); t.dur=Math.max(1,Math.round((t.dur||5)*5/7)); t.deps=[]; delete t.ini; } }); p.v=2; return p; }
+function sendToPlan(o){ const k=calcOrc(o); if(!o.itens.length){ toast("O orçamento está vazio."); return; }
+  const prazoC=parseInt(String(o.prazo).match(/\d+/)?.[0]||"0")||Math.max(60,Math.min(360,Math.round(k.tot/12000))); const prazo=Math.max(10,Math.round(prazoC*5/7));
+  let pl=S.plans.find(p=>p.orcId===o.id); if(pl) migratePlan(pl); const old=pl?Object.fromEntries(pl.tarefas.filter(t=>t.etId).map(t=>[t.etId,t])):{};
+  const ets=o.etapas.filter(e=>(k.et[e.id]||{}).n); let prev=null;
+  const tarefas=ets.map(e=>{ const v=k.et[e.id].tot, sh=k.tot?v/k.tot:1/ets.length; const t=old[e.id];
+    if(t){ t.nome=e.nome; t.valor=v; prev=t; return t; }
+    const dur=Math.max(3,Math.round(prazo*(sh*0.75+0.12))); const nt={id:uid(),etId:e.id,nome:e.nome,valor:v,dur,deps:prev?[{id:prev.id,lag:-Math.round(prev.dur*0.3)}]:[],fixo:""}; prev=nt; return nt; });
+  const manual=pl?pl.tarefas.filter(t=>!t.etId):[];
+  if(pl){ pl.tarefas=tarefas.concat(manual); pl.nome=o.nome; pl.atualizado=Date.now(); } else { pl=newPlan({orcId:o.id,nome:o.nome,tarefas,v:2}); S.plans.push(pl); }
+  o.planId=pl.id; save("plans"); touch(o); toast(Object.keys(old).length?"Planejamento atualizado com os valores do orçamento.":"Orçamento enviado para o planejamento."); go("plano-"+pl.id); }
+
+/* ---------- lista de obras ---------- */
+function viewPlanos(){ S.plans.forEach(migratePlan);
+  const rows=S.plans.map(p=>{ const sc=schedule(p); const prev=planejadoAte(p,sc,today()), real=realizadoDe(p,avancoAtual(p)); const V=p.tarefas.reduce((a,t)=>a+(t.valor||0),0); const d=real-prev;
+    const pill=!p.medicoes.length?'<span class="pill info">sem medição</span>':d>=-0.02?'<span class="pill ok">no prazo</span>':d>=-0.08?'<span class="pill warn">atenção</span>':'<span class="pill bad">atrasada</span>';
+    return `<tr class="click" data-pl="${p.id}"><td><b>${esc(p.nome)}</b><div class="small muted">${p.tarefas.length} atividades · ${p.rdos.length} RDOs</div></td><td>${dbr(p.inicio)}</td><td>${dbr(sc.fim)}</td><td class="n">${V?brl(V):"—"}</td><td style="min-width:150px"><div class="bar" title="Realizado"><i style="width:${(real*100).toFixed(1)}%"></i></div><div class="small muted">${pct(real,1)} real · ${pct(prev,1)} previsto</div></td><td>${pill}</td></tr>`; }).join("");
+  return `<div class="head"><div><div class="eyebrow">Obra</div><h1>Planejamento de obras</h1></div><button class="btn pri" id="plNew">${I(IC.plus)}Nova obra</button></div>
+  ${S.plans.length?`<div class="tw"><table class="t"><thead><tr><th>Obra</th><th>Início</th><th>Término previsto</th><th class="n">Valor</th><th>Avanço</th><th>Situação</th></tr></thead><tbody>${rows}</tbody></table></div>`:`<div class="empty">Abra um orçamento e toque em “Enviar para o planejamento”, ou crie uma obra do zero.</div>`}
+  <div class="feat">${[["plan","Cronograma","Dias úteis, dependências e caminho crítico"],["abc","Avanço e curva S","Medições: previsto × realizado"],["orc","RDO","Diário de obra com clima, efetivo e fotos"],["check","PPC semanal","Pacotes da semana e causas de não cumprimento"],["layers","Linha de balanço","Serviços repetitivos por unidade"]].map(([ic,t,d])=>`<a href="#planejamento" tabindex="-1" style="pointer-events:none"><span class="ic">${I(IC[ic])}</span><span><b>${t}</b><small>${d}</small></span></a>`).join("")}</div>`; }
+function bindPlanos(){ $$("[data-pl]").forEach(r=>r.onclick=()=>go("plano-"+r.dataset.pl));
+  $("#plNew").onclick=()=>{ const m=modal("Nova obra",`<div class="fields"><label class="f" style="grid-column:1/-1"><span>Nome da obra</span><input class="i" id="nwN" placeholder="ex.: Residência Silva"></label><label class="f"><span>Início</span><input class="i" type="date" id="nwI" value="${today()}"></label>
+    <label class="f"><span>Orçamento (opcional)</span><select class="i" id="nwO"><option value="">— sem orçamento —</option>${S.orcs.map(o=>`<option value="${o.id}">${esc(o.num)} · ${esc(o.nome)}</option>`).join("")}</select></label></div>`,
+    [{label:"Cancelar"},{label:"Criar",cls:"pri",on:mm=>{ const oid=$("#nwO",mm).value; if(oid){ const o=S.orcs.find(x=>x.id===oid); sendToPlan(o); return; } const n=$("#nwN",mm).value.trim(); if(!n){ toast("Dê um nome para a obra."); return false; }
+      const p=newPlan({nome:n,inicio:$("#nwI",mm).value||today(),v:2,tarefas:[{id:uid(),nome:"Serviços preliminares",valor:0,dur:5,deps:[],fixo:""}]}); S.plans.push(p); save("plans"); go("plano-"+p.id); }}],"sm"); }; }
+
+/* ---------- tela da obra ---------- */
+let PL=null, plTab="crono";
+const PTABS=[["crono","Cronograma"],["avanco","Avanço e curva S"],["rdo","RDO"],["ppc","PPC semanal"],["lob","Linha de balanço"],["cal","Calendário"]];
+function viewPlano(arg){ const [id,tab]=arg.split("-"); if(tab&&PTABS.some(t=>t[0]===tab)) plTab=tab; else if(!PL||PL.id!==id) plTab="crono"; const p=S.plans.find(x=>x.id===id); if(!p) return `<div class="empty">Obra não encontrada. <a href="#planejamento">Voltar</a></div>`; migratePlan(p); PL=p;
+  const sc=schedule(p); const V=p.tarefas.reduce((a,t)=>a+(t.valor||0),0); const prev=planejadoAte(p,sc,today()), real=realizadoDe(p,avancoAtual(p));
+  const body={crono:cronoHTML,avanco:avancoHTML,rdo:rdoHTML,ppc:ppcHTML,lob:lobHTML,cal:calHTML}[plTab](p,sc);
+  return `<div class="head"><div><div class="eyebrow"><a href="#planejamento">Planejamento</a>${p.orcId?` · <a href="#orc-${p.orcId}">orçamento</a>`:""}</div><h1>${esc(p.nome)}</h1></div>
+    <div class="row"><label class="f" style="flex-direction:row;align-items:center;gap:8px"><span>Início</span><input class="i" type="date" id="plIni" value="${esc(p.inicio)}" style="width:auto"></label><button class="btn ghost sm" id="plMore" aria-label="Mais opções">⋯</button></div></div>
+  <div class="grid4"><div class="kpi"><small>Término previsto</small><b>${dbr(sc.fim)}</b></div><div class="kpi"><small>Duração</small><b>${sc.end+1} dias úteis</b></div><div class="kpi"><small>Previsto hoje</small><b>${pct(prev,1)}</b></div><div class="kpi hi"><small>Realizado${p.medicoes.length?"":" (sem medição)"}</small><b>${pct(real,1)}</b></div></div>
+  ${sc.warn.map(w=>`<div class="alert warn">${esc(w)}</div>`).join("")}
+  <div class="tabs" role="tablist">${PTABS.map(([k,l])=>`<button data-pt="${k}" class="${plTab===k?"on":""}">${l}</button>`).join("")}</div>${body}`; }
+function bindPlano(){ const p=PL; if(!p) return; const sv=()=>{ p.atualizado=Date.now(); save("plans"); };
+  $$("[data-pt]").forEach(b=>b.onclick=()=>{ plTab=b.dataset.pt; history.replaceState(null,"","#plano-"+p.id+"-"+plTab); rerender(); });
+  $("#plIni").onchange=e=>{ p.inicio=e.target.value||today(); sv(); rerender(); };
+  $("#plMore").onclick=()=>{ const m=modal("Obra",`<label class="f"><span>Nome da obra</span><input class="i" id="poN" value="${esc(p.nome)}"></label><div class="row" style="margin-top:10px">${p.orcId?`<button class="btn" id="poSync">Atualizar valores pelo orçamento</button>`:""}<button class="btn" id="poXls">${I(IC.download)}Exportar cronograma</button><button class="btn danger" id="poDel">${I(IC.trash)}Excluir obra</button></div>`,[{label:"Fechar"}],"sm");
+    $("#poN",m).onchange=e=>{ p.nome=e.target.value; sv(); rerender(); }; const sy=$("#poSync",m); if(sy) sy.onclick=()=>{ m.close(); const o=S.orcs.find(x=>x.id===p.orcId); if(o) sendToPlan(o); else toast("O orçamento desta obra foi excluído."); };
+    $("#poXls",m).onclick=()=>{ m.close(); exportCrono(p); };
+    $("#poDel",m).onclick=async()=>{ m.close(); if(!(await confirmBox("Excluir esta obra, com cronograma, medições, RDOs e PPC?"))) return; for(const r of p.rdos) for(const f of r.fotos||[]) await Store.del("blobs",f); S.plans=S.plans.filter(x=>x!==p); save("plans"); go("planejamento"); }; };
+  ({crono:bindCrono,avanco:bindAvanco,rdo:bindRdo,ppc:bindPpc,lob:bindLob,cal:bindCal})[plTab](p,sv); }
+
+/* ---------- cronograma ---------- */
+const depStr=(p,t)=>t.deps.map(d=>{ const n=p.tarefas.findIndex(x=>x.id===d.id)+1; return n+(d.lag?(d.lag>0?"+":"")+d.lag:""); }).join("; ");
+function cronoHTML(p,sc){ const V=p.tarefas.reduce((a,t)=>a+(t.valor||0),0); const av=avancoAtual(p);
+  return `<div class="tw"><table class="t"><thead><tr><th>#</th><th>Atividade</th><th class="n">Valor</th><th class="n">Dias úteis</th><th>Predecessoras</th><th>Início fixo</th><th>Início</th><th>Término</th><th class="n">Folga</th><th class="n">Real</th><th></th></tr></thead><tbody>
+  ${p.tarefas.map((t,i)=>`<tr data-tk="${t.id}"><td class="mono">${i+1}</td><td style="min-width:200px"><input class="cell" data-tf="nome" value="${esc(t.nome)}" aria-label="Atividade">${t._crit?' <span class="pill bad" title="No caminho crítico: qualquer atraso atrasa a obra">crítica</span>':""}</td>
+    <td style="width:150px;min-width:150px"><input class="cell n" data-tf="valor" value="${t.valor?nf(t.valor):""}" inputmode="decimal" aria-label="Valor"></td><td style="width:80px"><input class="cell n" data-tf="dur" value="${t.dur}" inputmode="numeric" aria-label="Duração em dias úteis"></td>
+    <td style="width:120px"><input class="cell" data-tf="deps" value="${esc(depStr(p,t))}" placeholder="ex.: 1; 2-3" aria-label="Predecessoras"></td><td style="width:150px"><input class="cell" type="date" data-tf="fixo" value="${esc(t.fixo||"")}" aria-label="Início fixo"></td>
+    <td>${dbr(t._ini)}</td><td>${dbr(t._fim)}</td><td class="n">${t._fol}</td><td class="n">${av[t.id]!=null?nf(av[t.id],0)+"%":"—"}</td><td style="white-space:nowrap"><button class="btn ghost sm" data-tup="${i}" aria-label="Subir">${I(IC.up)}</button><button class="btn ghost sm" data-tdel="${i}" aria-label="Excluir">${I(IC.trash)}</button></td></tr>`).join("")}</tbody></table></div>
+  <div class="row"><button class="btn" id="tkAdd">${I(IC.plus)}Nova atividade</button><span class="small muted">Predecessoras: número da linha, com folga ou antecipação em dias úteis (ex.: <span class="mono">2+3</span> começa 3 dias após o fim da 2; <span class="mono">2-4</span> começa 4 dias antes). Feriados nacionais já descontados.</span></div>
+  <div class="card"><div class="row" style="justify-content:space-between"><h3 style="margin:0">Gantt</h3><span class="small muted"><span class="pill bad">■</span> caminho crítico · barra escura = realizado · linha laranja = hoje</span></div>${ganttSVG(p,sc,av)}</div>`; }
+function ganttSVG(p,sc,av){ const n=p.tarefas.length; if(!n) return `<div class="empty">Sem atividades.</div>`; const totalC=Math.max(7,diffD(p.inicio,sc.fim)+1);
+  const W=Math.max(900,Math.min(2400,totalC*6+220)),rh=28,pl=210,top=30,Hh=top+n*rh+10; const x=s=>pl+(W-pl-14)*diffD(p.inicio,s)/totalC, xe=s=>x(addD(s,1));
+  let s=`<div style="overflow-x:auto"><svg class="chart gantt" viewBox="0 0 ${W} ${Hh}" width="100%" style="min-width:${Math.round(W*0.72)}px" role="img" aria-label="Gráfico de Gantt">`;
+  const step=totalC>300?30:totalC>120?14:7; for(let d=0;d<=totalC;d+=step){ const xs=pl+(W-pl-14)*d/totalC; s+=`<line class="grid" x1="${xs}" x2="${xs}" y1="${top-8}" y2="${Hh}"/><text x="${xs+2}" y="${top-12}">${fmtDM(addD(p.inicio,d))}</text>`; }
+  const pos={}; p.tarefas.forEach((t,i)=>pos[t.id]={y:top+i*rh,x1:x(t._ini),x2:xe(t._fim)});
+  p.tarefas.forEach(t=>t.deps.forEach(d=>{ const a=pos[d.id], b=pos[t.id]; if(!a||!b) return; const mx=Math.max(a.x2,b.x1-6); s+=`<path d="M${a.x2},${a.y+rh/2} H${mx+4} V${b.y+rh/2} H${b.x1}" fill="none" stroke="var(--muted)" stroke-width="1" opacity=".55"/><path d="M${b.x1-4},${b.y+rh/2-3} L${b.x1},${b.y+rh/2} L${b.x1-4},${b.y+rh/2+3}" fill="var(--muted)" opacity=".7"/>`; }));
+  p.tarefas.forEach((t,i)=>{ const y=top+i*rh, P=pos[t.id], w=Math.max(3,P.x2-P.x1), r=(av[t.id]||0)/100; s+=`<text class="lbl" x="6" y="${y+17}">${esc((i+1)+". "+t.nome).slice(0,32)}</text>
+    <rect x="${P.x1}" y="${y+6}" width="${w}" height="${rh-12}" rx="3" fill="${t._crit?"var(--bad)":"var(--brand2)"}" opacity=".35"><title>${esc(t.nome)}: ${dbr(t._ini)} a ${dbr(t._fim)} (${t.dur} dias úteis, folga ${t._fol})</title></rect>
+    ${r?`<rect x="${P.x1}" y="${y+6}" width="${w*r}" height="${rh-12}" rx="3" fill="${t._crit?"var(--bad)":"var(--brand2)"}"/>`:""}`; });
+  const td=today(); if(td>=p.inicio&&td<=addD(p.inicio,totalC)){ const xt=x(td); s+=`<line x1="${xt}" x2="${xt}" y1="${top-8}" y2="${Hh}" stroke="var(--amber)" stroke-width="2"/>`; }
+  return s+"</svg></div>"; }
+function parseDeps(p,str,self){ const out=[]; for(const part of String(str).split(/[;,]/).map(x=>x.trim()).filter(Boolean)){ const m=part.match(/^(\d+)\s*(?:fs|ti)?\s*([+-]\s*\d+)?\s*(?:d|dias)?$/i); if(!m) return null; const t=p.tarefas[+m[1]-1]; if(!t||t===self) return null; out.push({id:t.id,lag:m[2]?parseInt(m[2].replace(/\s/g,"")):0}); } return out; }
+function dependsOn(p,a,b,seen=new Set()){ if(a===b) return true; if(seen.has(a)) return false; seen.add(a); const t=p.tarefas.find(x=>x.id===a); return !!t&&(t.deps||[]).some(d=>dependsOn(p,d.id,b,seen)); }
+function bindCrono(p,sv){ $$("tr[data-tk] .cell").forEach(inp=>inp.onchange=()=>{ const t=p.tarefas.find(x=>x.id===inp.closest("tr").dataset.tk); const f=inp.dataset.tf; const v=inp.value;
+    if(f==="nome") t.nome=v.trim()||"Atividade"; else if(f==="valor") t.valor=parseNum(v)||0; else if(f==="dur"){ const d=parseInt(v); if(!(d>0)){ toast("Duração em dias úteis, maior que zero."); inp.value=t.dur; return; } t.dur=d; }
+    else if(f==="deps"){ const d=parseDeps(p,v,t); if(d==null){ toast("Use os números das linhas, separados por ponto e vírgula, como 1; 3+2."); inp.value=depStr(p,t); return; } const bad=d.find(x=>dependsOn(p,x.id,t.id)); if(bad){ toast(`A atividade ${p.tarefas.findIndex(z=>z.id===bad.id)+1} já depende desta; isso criaria um ciclo.`); inp.value=depStr(p,t); return; } t.deps=d; }
+    else if(f==="fixo") t.fixo=v; sv(); rerender(); });
+  $("#tkAdd").onclick=()=>{ const last=p.tarefas[p.tarefas.length-1]; p.tarefas.push({id:uid(),nome:"Nova atividade",valor:0,dur:5,deps:last?[{id:last.id,lag:0}]:[],fixo:""}); sv(); rerender(); };
+  $$("[data-tup]").forEach(b=>b.onclick=()=>{ const i=+b.dataset.tup; if(i>0){ [p.tarefas[i-1],p.tarefas[i]]=[p.tarefas[i],p.tarefas[i-1]]; sv(); rerender(); } });
+  $$("[data-tdel]").forEach(b=>b.onclick=async()=>{ const t=p.tarefas[+b.dataset.tdel]; if(!(await confirmBox(`Excluir “${t.nome}”?`))) return; p.tarefas.splice(+b.dataset.tdel,1); p.tarefas.forEach(x=>x.deps=x.deps.filter(d=>d.id!==t.id)); sv(); rerender(); }); }
+async function exportCrono(p){ const XLSX=await needXLSX().catch(()=>null); if(!XLSX){ toast("Sem conexão para carregar o gerador de planilhas."); return; } const sc=schedule(p); const av=avancoAtual(p);
+  const A=[[`Cronograma — ${p.nome}`],[`Início ${dbr(p.inicio)} · Término previsto ${dbr(sc.fim)} · ${sc.end+1} dias úteis`],[],["#","Atividade","Valor","Dias úteis","Predecessoras","Início","Término","Folga","Crítica","Realizado %"],
+    ...p.tarefas.map((t,i)=>[i+1,t.nome,r2(t.valor||0),t.dur,depStr(p,t),dbr(t._ini),dbr(t._fim),t._fol,t._crit?"sim":"",av[t.id]??""])];
+  const wb=XLSX.utils.book_new(), ws=XLSX.utils.aoa_to_sheet(A); ws["!cols"]=[{wch:4},{wch:40},{wch:14},{wch:10},{wch:14},{wch:12},{wch:12},{wch:7},{wch:8},{wch:11}]; XLSX.utils.book_append_sheet(wb,ws,"Cronograma");
+  await saveFile(`cronograma_${safeName(p.nome)}.xlsx`,new Blob([XLSX.write(wb,{type:"array",bookType:"xlsx"})],{type:"application/octet-stream"})); }
+
+/* ---------- avanço e curva S ---------- */
+function avancoHTML(p,sc){ const meds=p.medicoes.slice().sort((a,b)=>a.data<b.data?-1:1); const last=meds[meds.length-1]; const real=last?realizadoDe(p,last.av):0, prevL=last?planejadoAte(p,sc,last.data):0;
+  const idp=last&&prevL?real/prevL:null;
+  return `<div class="grid2"><div class="card"><h3>Medições de avanço físico</h3><p class="small muted" style="margin-top:0">Informe o percentual acumulado executado de cada atividade na data da medição. O realizado da obra é ponderado pelo valor.</p>
+    ${meds.length?`<div class="list">${meds.slice().reverse().map(m=>{ const r=realizadoDe(p,m.av), pv=planejadoAte(p,sc,m.data); return `<div class="li"><div><b>${dbr(m.data)}</b><div class="small muted">${pct(r,1)} realizado · ${pct(pv,1)} previsto</div></div><div class="row"><span class="pill ${r>=pv-0.02?"ok":r>=pv-0.08?"warn":"bad"}">${r>=pv?"+":""}${nf((r-pv)*100,1)} p.p.</span><button class="btn sm" data-med="${m.id}">Editar</button></div></div>`; }).join("")}</div>`:`<div class="empty">Nenhuma medição ainda.</div>`}
+    <button class="btn pri" id="medNew" style="margin-top:10px">${I(IC.plus)}Nova medição</button></div>
+  <div class="card"><h3>Situação na última medição</h3>${last?`<div class="grid2"><div class="kpi"><small>Realizado</small><b>${pct(real,1)}</b></div><div class="kpi"><small>Previsto na data</small><b>${pct(prevL,1)}</b></div></div>
+    <p class="small" style="margin-top:10px">Índice de desempenho de prazo (realizado ÷ previsto): <b class="num">${idp!=null?nf(idp,2):"—"}</b>. ${idp==null?"":idp>=0.98?"A obra está no ritmo previsto.":idp>=0.9?"Pequeno atraso; vale reforçar as atividades críticas.":"Atraso relevante; reveja a programação das atividades críticas."}</p>
+    <div class="tw"><table class="t"><thead><tr><th>Atividade</th><th class="n">Previsto</th><th class="n">Real</th></tr></thead><tbody>${p.tarefas.map(t=>{ const d=Math.max(1,t.dur); const pv=Math.max(0,Math.min(1,(sc.cal.idx(last.data)+1-t._es)/d)); const r=(last.av[t.id]||0)/100; return `<tr><td>${esc(t.nome)}${t._crit?' <span class="pill bad">crítica</span>':""}</td><td class="n">${pct(pv,0)}</td><td class="n" style="${r<pv-0.1?"color:var(--bad);font-weight:600":""}">${pct(r,0)}</td></tr>`; }).join("")}</tbody></table></div>`:`<div class="empty">Faça a primeira medição para comparar com o previsto.</div>`}</div></div>
+  <div class="card"><h3>Curva S: previsto × realizado</h3>${curvaS2(p,sc)}</div>`; }
+function curvaS2(p,sc){ const totalC=Math.max(7,diffD(p.inicio,sc.fim)+1); const pts=[]; for(let d=0;d<=totalC;d+=Math.max(1,Math.round(totalC/60))) pts.push([d,planejadoAte(p,sc,addD(p.inicio,d))]); pts.push([totalC,1]);
+  const meds=p.medicoes.slice().sort((a,b)=>a.data<b.data?-1:1).map(m=>[diffD(p.inicio,m.data),realizadoDe(p,m.av),m.data]).filter(x=>x[0]>=0);
+  const W=900,Hh=250,pl=46,pr=16,pt=12,pb=28; const x=d=>pl+(W-pl-pr)*d/totalC, y=v=>pt+(Hh-pt-pb)*(1-v);
+  let s=`<svg class="chart" viewBox="0 0 ${W} ${Hh}" width="100%" role="img" aria-label="Curva S prevista e realizada">`; [0,.25,.5,.75,1].forEach(v=>s+=`<line class="grid" x1="${pl}" x2="${W-pr}" y1="${y(v)}" y2="${y(v)}"/><text x="${pl-6}" y="${y(v)+4}" text-anchor="end">${v*100}%</text>`);
+  const step=totalC>300?30:totalC>120?14:7; for(let d=0;d<=totalC;d+=step) s+=`<text x="${x(d)}" y="${Hh-8}" text-anchor="middle">${fmtDM(addD(p.inicio,d))}</text>`;
+  s+=`<path d="M${x(0)},${y(0)} ${pts.map(([d,v])=>`L${x(d)},${y(v)}`).join(" ")} L${x(totalC)},${y(0)} Z" fill="var(--brand2)" opacity=".1"/><polyline fill="none" stroke="var(--brand2)" stroke-width="2.2" points="${pts.map(([d,v])=>`${x(d)},${y(v)}`).join(" ")}"/>`;
+  if(meds.length){ const mm=[[0,0]].concat(meds); s+=`<polyline fill="none" stroke="var(--amber)" stroke-width="2.6" points="${mm.map(([d,v])=>`${x(d)},${y(v)}`).join(" ")}"/>`; meds.forEach(([d,v,dt])=>s+=`<circle cx="${x(d)}" cy="${y(v)}" r="4" fill="var(--amber)"><title>${dbr(dt)}: ${pct(v,1)}</title></circle>`); }
+  const td=diffD(p.inicio,today()); if(td>=0&&td<=totalC) s+=`<line x1="${x(td)}" x2="${x(td)}" y1="${pt}" y2="${Hh-pb}" stroke="var(--muted)" stroke-dasharray="3 4"/><text x="${x(td)+4}" y="${pt+10}">hoje</text>`;
+  return s+`</svg><div class="row small muted"><span><b style="color:var(--brand2)">━</b> previsto</span><span><b style="color:var(--amber)">━</b> realizado (medições)</span></div>`; }
+function medDialog(p,med,sv){ const base=med?med.av:avancoAtual(p); const m=modal(med?"Editar medição":"Nova medição",`<label class="f"><span>Data da medição</span><input class="i" type="date" id="mdD" value="${esc(med?med.data:today())}" style="max-width:200px"></label>
+  <div class="tw"><table class="t"><thead><tr><th>Atividade</th><th class="n">% acumulado executado</th></tr></thead><tbody>${p.tarefas.map(t=>`<tr><td>${esc(t.nome)}</td><td style="width:150px"><input class="cell n" data-mv="${t.id}" value="${base[t.id]??0}" inputmode="decimal" aria-label="Percentual de ${esc(t.nome)}"></td></tr>`).join("")}</tbody></table></div>`,
+  [...(med?[{label:"Excluir",cls:"danger",on:()=>{ p.medicoes=p.medicoes.filter(x=>x!==med); sv(); rerender(); }}]:[]),{label:"Cancelar"},{label:"Salvar",cls:"pri",on:mm=>{ const av={}; for(const i of $$("[data-mv]",mm)){ const v=parseNum(i.value); if(v==null||v<0||v>100){ toast("Use percentuais de 0 a 100."); i.focus(); return false; } av[i.dataset.mv]=v; }
+    const data=$("#mdD",mm).value||today(); if(med) Object.assign(med,{data,av}); else p.medicoes.push({id:uid(),data,av}); sv(); rerender(); toast("Medição salva."); }}]); }
+function bindAvanco(p,sv){ $("#medNew").onclick=()=>medDialog(p,null,sv); $$("[data-med]").forEach(b=>b.onclick=()=>medDialog(p,p.medicoes.find(m=>m.id===b.dataset.med),sv)); }
+
+/* ---------- RDO ---------- */
+const CLIMA=["Bom","Nublado","Chuva fraca","Chuva forte"], FUNC=["Engenheiro","Mestre de obras","Encarregado","Pedreiro","Servente","Carpinteiro","Armador","Eletricista","Encanador","Pintor","Azulejista"];
+const fotoCache={};
+async function fotoURL(k){ if(fotoCache[k]) return fotoCache[k]; const v=await Store.get("blobs",k); if(v) fotoCache[k]=v; return v||""; }
+function compressImg(file,max=1280,q=.72){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>{ const im=new Image(); im.onload=()=>{ const s=Math.min(1,max/Math.max(im.width,im.height)); const c=document.createElement("canvas"); c.width=Math.round(im.width*s); c.height=Math.round(im.height*s); c.getContext("2d").drawImage(im,0,0,c.width,c.height); res(c.toDataURL("image/jpeg",q)); }; im.onerror=rej; im.src=fr.result; }; fr.onerror=rej; fr.readAsDataURL(file); }); }
+function rdoHTML(p){ const R=p.rdos.slice().sort((a,b)=>a.data<b.data?1:-1); const chuva=R.filter(r=>/chuva/i.test(r.clima.m+r.clima.t)).length, imp=R.filter(r=>r.cond==="Impraticável").length; const ef=R.length?R.reduce((a,r)=>a+r.efetivo.reduce((x,e)=>x+(+e[1]||0),0),0)/R.length:0;
+  return `<div class="row" style="justify-content:space-between"><div class="row small muted"><span>${R.length} RDOs</span>·<span>${chuva} dia(s) com chuva</span>·<span>${imp} dia(s) impraticável(is)</span>·<span>efetivo médio ${nf(ef,1)}</span></div><button class="btn pri" id="rdoNew">${I(IC.plus)}Novo RDO</button></div>
+  ${R.length?`<div class="tw"><table class="t"><thead><tr><th>Nº</th><th>Data</th><th>Clima (manhã / tarde)</th><th>Condição</th><th class="n">Efetivo</th><th>Atividades</th><th class="n">Fotos</th><th></th></tr></thead><tbody>${R.map(r=>`<tr class="click" data-rdo="${r.id}"><td class="mono">${String(r.n).padStart(3,"0")}</td><td>${dbr(r.data)}<div class="small muted">${["dom","seg","ter","qua","qui","sex","sáb"][dow(r.data)]}</div></td><td>${esc(r.clima.m)} / ${esc(r.clima.t)}</td><td><span class="pill ${r.cond==="Praticável"?"ok":r.cond==="Parcial"?"warn":"bad"}">${esc(r.cond)}</span></td><td class="n">${r.efetivo.reduce((a,e)=>a+(+e[1]||0),0)}</td><td class="small" style="max-width:340px">${esc((r.ativ||"").slice(0,110))}${(r.ativ||"").length>110?"…":""}</td><td class="n">${(r.fotos||[]).length}</td><td><button class="btn sm" data-rdopdf="${r.id}">${I(IC.download)}PDF</button></td></tr>`).join("")}</tbody></table></div>`:`<div class="empty">Nenhum RDO ainda. O diário registra clima, efetivo, atividades, ocorrências e fotos de cada dia.</div>`}`; }
+function rdoDialog(p,r,sv){ const isNew=!r; r=r||{id:uid(),n:(Math.max(0,...p.rdos.map(x=>x.n||0))+1),data:today(),clima:{m:"Bom",t:"Bom"},cond:"Praticável",efetivo:FUNC.slice(0,5).map(f=>[f,0]),equip:"",ativ:"",ocorr:"",fotos:[],resp:S.cfg.resp||""};
+  const last=p.rdos.slice().sort((a,b)=>a.data<b.data?1:-1)[0]; if(isNew&&last) r.efetivo=last.efetivo.map(e=>e.slice());
+  const fotos=(r.fotos||[]).slice(); const active=p.tarefas.filter(t=>t._ini<=r.data&&t._fim>=r.data);
+  const m=modal(`RDO nº ${String(r.n).padStart(3,"0")}`,`<div class="fields"><label class="f"><span>Data</span><input class="i" type="date" id="rdD" value="${esc(r.data)}"></label>
+    <label class="f"><span>Clima manhã</span><select class="i" id="rdM">${CLIMA.map(c=>`<option ${c===r.clima.m?"selected":""}>${c}</option>`).join("")}</select></label><label class="f"><span>Clima tarde</span><select class="i" id="rdT">${CLIMA.map(c=>`<option ${c===r.clima.t?"selected":""}>${c}</option>`).join("")}</select></label>
+    <label class="f"><span>Condição de trabalho</span><select class="i" id="rdC">${["Praticável","Parcial","Impraticável"].map(c=>`<option ${c===r.cond?"selected":""}>${c}</option>`).join("")}</select></label></div>
+    <div><b class="small">Efetivo (pessoas no dia)</b><div class="fields" id="rdEf" style="margin-top:6px">${r.efetivo.map((e,i)=>`<label class="f"><span>${esc(e[0])}</span><input class="i num" data-ef="${i}" value="${esc(e[1])}" inputmode="numeric"></label>`).join("")}</div>
+      <div class="row" style="margin-top:6px"><select class="i" id="rdFn" style="width:auto">${FUNC.filter(f=>!r.efetivo.some(e=>e[0]===f)).map(f=>`<option>${f}</option>`).join("")}<option value="__">Outra função…</option></select><button class="btn sm" id="rdFa">${I(IC.plus)}Adicionar função</button></div></div>
+    <label class="f"><span>Atividades executadas</span><textarea class="i" id="rdA" rows="3" placeholder="O que foi feito hoje">${esc(r.ativ)}</textarea></label>
+    ${active.length?`<div class="row small"><span class="muted">Programadas para o dia:</span>${active.map(t=>`<button class="btn sm" data-ins="${esc(t.nome)}">${esc(t.nome)}</button>`).join("")}</div>`:""}
+    <label class="f"><span>Equipamentos em uso</span><input class="i" id="rdE" value="${esc(r.equip)}" placeholder="ex.: betoneira, andaime, caminhão munck"></label>
+    <label class="f"><span>Ocorrências, visitas e observações</span><textarea class="i" id="rdO" rows="2">${esc(r.ocorr)}</textarea></label>
+    <label class="f"><span>Responsável pelo registro</span><input class="i" id="rdR" value="${esc(r.resp)}"></label>
+    <div><b class="small">Fotos</b><div class="row" id="rdPh" style="margin-top:6px"></div><div class="row" style="margin-top:6px"><button class="btn sm" id="rdAddPh">${I(IC.upload)}Adicionar fotos</button><span class="small muted">As fotos são reduzidas para economizar espaço.</span></div></div>`,
+    [...(!isNew?[{label:"Excluir",cls:"danger",on:async()=>{ if(!(await confirmBox("Excluir este RDO e as fotos dele?"))) return false; for(const f of r.fotos||[]) await Store.del("blobs",f); p.rdos=p.rdos.filter(x=>x!==r); sv(); rerender(); }}]:[]),{label:"Cancelar",on:async()=>{ for(const f of fotos) if(!(r.fotos||[]).includes(f)) await Store.del("blobs",f); }},
+     {label:"Salvar",cls:"pri",on:async mm=>{ for(const f of (r.fotos||[])) if(!fotos.includes(f)) await Store.del("blobs",f);
+       Object.assign(r,{data:$("#rdD",mm).value||today(),clima:{m:$("#rdM",mm).value,t:$("#rdT",mm).value},cond:$("#rdC",mm).value,efetivo:r.efetivo.map((e,i)=>[e[0],parseInt($(`[data-ef="${i}"]`,mm)?.value)||0]),ativ:$("#rdA",mm).value,equip:$("#rdE",mm).value,ocorr:$("#rdO",mm).value,resp:$("#rdR",mm).value,fotos});
+       if(isNew) p.rdos.push(r); sv(); rerender(); toast("RDO salvo."); }}]);
+  const drawPh=async()=>{ const box=$("#rdPh",m); box.innerHTML=""; for(const k of fotos){ const u=await fotoURL(k); const d=document.createElement("div"); d.style.cssText="position:relative"; d.innerHTML=`<img src="${u}" alt="Foto do RDO" style="width:96px;height:72px;object-fit:cover;border-radius:6px;border:1px solid var(--line)"><button class="btn sm" style="position:absolute;top:2px;right:2px;padding:0 5px" aria-label="Remover foto">×</button>`; d.querySelector("button").onclick=()=>{ fotos.splice(fotos.indexOf(k),1); drawPh(); }; box.appendChild(d); } };
+  drawPh();
+  $("#rdAddPh",m).onclick=()=>{ const i=document.createElement("input"); i.type="file"; i.accept="image/*"; i.multiple=true; i.onchange=async()=>{ for(const f of i.files){ try{ const url=await compressImg(f); const k="foto-"+uid(); await Store.set("blobs",k,url); fotoCache[k]=url; fotos.push(k); }catch(e){ toast("Não consegui ler uma das fotos."); } } drawPh(); }; i.click(); };
+  $("#rdFa",m).onclick=()=>{ let f=$("#rdFn",m).value; if(f==="__"){ const nm=document.createElement("input"); f=""; }
+    const add=n=>{ r.efetivo.push([n,0]); const box=$("#rdEf",m); const i=r.efetivo.length-1; box.insertAdjacentHTML("beforeend",`<label class="f"><span>${esc(n)}</span><input class="i num" data-ef="${i}" value="0" inputmode="numeric"></label>`); const o=$("#rdFn",m).querySelector(`option[value="${CSS.escape(n)}"]`)||[...$("#rdFn",m).options].find(x=>x.text===n); if(o) o.remove(); };
+    if(f) add(f); else { const row=$("#rdFa",m).parentElement; if(!$("#rdFx",m)){ row.insertAdjacentHTML("beforeend",`<input class="i" id="rdFx" placeholder="Nome da função" style="width:180px"><button class="btn sm" id="rdFok">OK</button>`); $("#rdFok",m).onclick=()=>{ const v=$("#rdFx",m).value.trim(); if(v){ add(v); $("#rdFx",m).value=""; } }; } } };
+  $$("[data-ins]",m).forEach(b=>b.onclick=()=>{ const ta=$("#rdA",m); ta.value=(ta.value?ta.value.replace(/\s*$/,"")+"\n":"")+b.dataset.ins+": "; ta.focus(); }); }
+async function rdoPDF(p,r,btn){ let jsPDF; if(btn) btn.disabled=true; try{ jsPDF=await needPDF(); }catch(e){ toast("Sem conexão para carregar o gerador de PDF."); if(btn) btn.disabled=false; return; }
+  try{ const cfg=S.cfg; const doc=new jsPDF({unit:"mm",format:"a4"}); const _t=doc.text.bind(doc); const fx=s=>typeof s==="string"?pdfSafe(s):Array.isArray(s)?s.map(fx):s; doc.text=(t,...a)=>_t(fx(t),...a); const _sp=doc.splitTextToSize.bind(doc); doc.splitTextToSize=(t,...a)=>_sp(pdfSafe(String(t)),...a);
+    const W=210,M=14,NAVY=[10,72,107],AMB=[243,183,56],INK=[20,34,46],MUT=[91,107,120];
+    doc.setFillColor(...NAVY); doc.rect(0,0,W,26,"F"); doc.setFillColor(...AMB); doc.rect(0,26,W,1.1,"F"); try{ doc.addImage(cfg.logo||LOGO,"PNG",M,3,20,20); }catch(e){}
+    doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(13); doc.text("RELATÓRIO DIÁRIO DE OBRA",M+25,11); doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.text(cfg.empresa||"TEX Engenharia & Inovação",M+25,17);
+    doc.setTextColor(...AMB); doc.setFont("helvetica","bold"); doc.text(`RDO nº ${String(r.n).padStart(3,"0")}`,W-M,11,{align:"right"}); doc.setTextColor(255,255,255); doc.setFont("helvetica","normal"); doc.text(dbr(r.data),W-M,17,{align:"right"}); doc.setTextColor(...INK);
+    const sc=schedule(p); const dias=diffD(p.inicio,r.data)+1;
+    doc.autoTable({startY:32,theme:"grid",styles:{fontSize:9,cellPadding:2,lineColor:[217,225,231],lineWidth:.2,textColor:INK},headStyles:{fillColor:NAVY},margin:{left:M,right:M},
+      body:[[{content:"Obra",styles:{fontStyle:"bold"}},pdfSafe(p.nome),{content:"Dia da obra",styles:{fontStyle:"bold"}},`${dias} (término previsto ${dbr(sc.fim)})`],[{content:"Clima",styles:{fontStyle:"bold"}},`Manhã: ${r.clima.m} · Tarde: ${r.clima.t}`,{content:"Condição",styles:{fontStyle:"bold"}},r.cond]]});
+    let y=doc.lastAutoTable.finalY+5; const ef=r.efetivo.filter(e=>+e[1]>0); const tot=ef.reduce((a,e)=>a+(+e[1]),0);
+    doc.autoTable({startY:y,head:[["Efetivo","Qtd."]],body:ef.map(e=>[pdfSafe(e[0]),String(e[1])]).concat([[{content:"Total",styles:{fontStyle:"bold"}},{content:String(tot),styles:{fontStyle:"bold"}}]]),theme:"grid",styles:{fontSize:9,cellPadding:1.6,lineColor:[217,225,231],lineWidth:.2},headStyles:{fillColor:NAVY},margin:{left:M,right:W/2+4},columnStyles:{1:{halign:"right",cellWidth:16}}});
+    const yEf=doc.lastAutoTable.finalY; doc.setFontSize(8); doc.setTextColor(...MUT); doc.text("EQUIPAMENTOS",W/2+4,y+3); doc.setFontSize(9.5); doc.setTextColor(...INK); const eq=doc.splitTextToSize(r.equip||"—",W/2-4-M); doc.text(eq,W/2+4,y+8);
+    y=Math.max(yEf,y+8+eq.length*4.4)+6; const need=h=>{ if(y+h>282){ doc.addPage(); y=18; } };
+    const sec=(t,txt)=>{ const L=doc.splitTextToSize(txt||"—",W-2*M); need(8+L.length*4.5); doc.setFont("helvetica","bold"); doc.setFontSize(9.5); doc.setTextColor(...NAVY); doc.text(t,M,y); y+=5; doc.setFont("helvetica","normal"); doc.setTextColor(...INK); doc.text(L,M,y); y+=L.length*4.5+4; };
+    sec("ATIVIDADES EXECUTADAS",r.ativ); sec("OCORRÊNCIAS E OBSERVAÇÕES",r.ocorr);
+    if((r.fotos||[]).length){ need(10); doc.setFont("helvetica","bold"); doc.setTextColor(...NAVY); doc.text("REGISTRO FOTOGRÁFICO",M,y); y+=4; const cw=(W-2*M-6)/2, ch=cw*0.75; let col=0;
+      for(const k of r.fotos){ const u=await fotoURL(k); if(!u) continue; if(col===0) need(ch+4); try{ const ip=doc.getImageProperties(u); const s=Math.min(cw/ip.width,ch/ip.height); doc.addImage(u,"JPEG",M+col*(cw+6)+(cw-ip.width*s)/2,y+(ch-ip.height*s)/2,ip.width*s,ip.height*s); }catch(e){} col++; if(col===2){ col=0; y+=ch+4; } } if(col) y+=ch+4; }
+    need(30); y+=14; doc.setDrawColor(...INK); doc.line(M,y,M+80,y); doc.line(W-M-80,y,W-M,y); doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(...INK); doc.text(r.resp||"Responsável pela obra",M,y+4.5); doc.text("Fiscalização / cliente",W-M-80,y+4.5);
+    const n=doc.getNumberOfPages(); for(let i=1;i<=n;i++){ doc.setPage(i); doc.setFontSize(7.5); doc.setTextColor(...MUT); doc.text(`${pdfSafe(p.nome)} · RDO ${String(r.n).padStart(3,"0")} · página ${i} de ${n}`,W-M,291,{align:"right"}); }
+    await saveFile(`RDO_${String(r.n).padStart(3,"0")}_${r.data}_${safeName(p.nome)}.pdf`,doc.output("blob"));
+  }catch(e){ console.error(e); toast("Não consegui gerar o PDF do RDO."); } finally{ if(btn) btn.disabled=false; } }
+function bindRdo(p,sv){ schedule(p); $("#rdoNew").onclick=()=>rdoDialog(p,null,sv);
+  $$("[data-rdo]").forEach(tr=>tr.onclick=e=>{ if(e.target.closest("[data-rdopdf]")) return; rdoDialog(p,p.rdos.find(r=>r.id===tr.dataset.rdo),sv); });
+  $$("[data-rdopdf]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); rdoPDF(p,p.rdos.find(r=>r.id===b.dataset.rdopdf),b); }); }
+
+/* ---------- PPC semanal ---------- */
+const CAUSAS=["Falta de material","Falta de mão de obra","Chuva / clima","Projeto ou definição pendente","Equipamento","Atividade anterior não concluída","Mudança do cliente","Planejamento otimista","Outros"];
+let ppcWeek=null;
+function ppcOf(sem){ const it=sem.itens.filter(i=>i.ok!=null); return it.length?it.filter(i=>i.ok).length/it.length:null; }
+function ppcHTML(p,sc){ const wk=ppcWeek||mondayOf(today()); ppcWeek=wk; let sem=p.ppc.find(s=>s.semana===wk); const all=p.ppc.slice().sort((a,b)=>a.semana<b.semana?-1:1); const vals=all.map(s=>[s.semana,ppcOf(s)]).filter(x=>x[1]!=null);
+  const media=vals.length?vals.reduce((a,x)=>a+x[1],0)/vals.length:null; const causas={}; all.forEach(s=>s.itens.forEach(i=>{ if(i.ok===false) causas[i.causa||"Outros"]=(causas[i.causa||"Outros"]||0)+1; })); const cz=Object.entries(causas).sort((a,b)=>b[1]-a[1]); const czT=cz.reduce((a,x)=>a+x[1],0);
+  const its=sem?sem.itens:[]; const v=sem?ppcOf(sem):null;
+  return `<div class="row" style="justify-content:space-between"><div class="row"><button class="btn sm" id="pwPrev" aria-label="Semana anterior">${I(IC.up).replace('d="M6 15l6-6 6 6"','d="M15 6l-6 6 6 6"')}</button><b>Semana de ${dbr(wk)} a ${dbr(addD(wk,6))}</b><button class="btn sm" id="pwNext" aria-label="Próxima semana">${I(IC.up).replace('d="M6 15l6-6 6 6"','d="M9 6l6 6-6 6"')}</button>${wk!==mondayOf(today())?`<button class="btn sm ghost" id="pwToday">Esta semana</button>`:""}</div>
+    <div class="row"><button class="btn" id="pwSug">${I(IC.spark)}Sugerir pela programação</button><button class="btn pri" id="pwAdd">${I(IC.plus)}Pacote de trabalho</button></div></div>
+  <div class="grid4"><div class="kpi hi"><small>PPC da semana</small><b>${v==null?"—":pct(v,0)}</b></div><div class="kpi"><small>Pacotes planejados</small><b>${its.length}</b></div><div class="kpi"><small>PPC médio da obra</small><b>${media==null?"—":pct(media,0)}</b></div><div class="kpi"><small>Semanas avaliadas</small><b>${vals.length}</b></div></div>
+  ${its.length?`<div class="tw"><table class="t"><thead><tr><th>Pacote de trabalho</th><th>Atividade</th><th>Responsável</th><th>Concluído?</th><th>Causa (se não)</th><th></th></tr></thead><tbody>${its.map(i=>`<tr data-pi="${i.id}"><td style="min-width:220px"><input class="cell" data-pf="desc" value="${esc(i.desc)}" aria-label="Pacote"></td><td class="small">${esc((p.tarefas.find(t=>t.id===i.taskId)||{}).nome||"—")}</td><td style="width:150px"><input class="cell" data-pf="resp" value="${esc(i.resp||"")}" placeholder="equipe/empreiteiro" aria-label="Responsável"></td>
+    <td style="white-space:nowrap"><button class="btn sm ${i.ok===true?"pri":""}" data-pok="1" aria-label="Concluído">${I(IC.check)}Sim</button> <button class="btn sm ${i.ok===false?"danger":""}" data-pok="0" aria-label="Não concluído" style="${i.ok===false?"border-color:var(--bad)":""}">${I(IC.x)}Não</button></td>
+    <td style="width:220px">${i.ok===false?`<select class="i" data-pf="causa" aria-label="Causa">${CAUSAS.map(c=>`<option ${c===i.causa?"selected":""}>${c}</option>`).join("")}</select>`:'<span class="muted small">—</span>'}</td><td><button class="btn ghost sm" data-pdel aria-label="Remover">${I(IC.trash)}</button></td></tr>`).join("")}</tbody></table></div>`
+  :`<div class="empty">Nenhum pacote planejado para esta semana. Use “Sugerir pela programação” para trazer as atividades previstas no cronograma.</div>`}
+  <div class="grid2"><div class="card"><h3>PPC por semana</h3>${ppcChart(vals)}</div><div class="card"><h3>Causas de não cumprimento</h3>${cz.length?cz.map(([c,n])=>`<div style="margin-bottom:8px"><div class="row" style="justify-content:space-between"><span class="small">${esc(c)}</span><span class="num small">${n} · ${pct(n/czT,0)}</span></div><div class="bar"><i style="width:${n/cz[0][1]*100}%;background:var(--bad)"></i></div></div>`).join(""):'<div class="muted small">Sem registros de pacotes não concluídos.</div>'}</div></div>`; }
+function ppcChart(vals){ if(!vals.length) return `<div class="muted small">Marque os pacotes como concluídos ou não para ver o PPC.</div>`; const V=vals.slice(-16); const W=600,Hh=200,pl=36,pb=26,pt=10; const bw=(W-pl-10)/V.length; const y=v=>pt+(Hh-pt-pb)*(1-v);
+  let s=`<svg class="chart" viewBox="0 0 ${W} ${Hh}" width="100%" role="img" aria-label="PPC por semana">`; [0,.5,.8,1].forEach(v=>s+=`<line class="grid" x1="${pl}" x2="${W-10}" y1="${y(v)}" y2="${y(v)}"/><text x="${pl-5}" y="${y(v)+4}" text-anchor="end">${v*100}%</text>`);
+  s+=`<line x1="${pl}" x2="${W-10}" y1="${y(.8)}" y2="${y(.8)}" stroke="var(--ok)" stroke-dasharray="4 4"/><text x="${W-12}" y="${y(.8)-4}" text-anchor="end" style="fill:var(--ok)">meta 80%</text>`;
+  V.forEach(([w,v],i)=>{ const x=pl+i*bw+bw*.15; s+=`<rect x="${x}" y="${y(v)}" width="${bw*.7}" height="${Hh-pb-y(v)}" rx="2" fill="${v>=.8?"var(--ok)":v>=.6?"var(--warn)":"var(--bad)"}"><title>${dbr(w)}: ${pct(v,0)}</title></rect><text x="${x+bw*.35}" y="${Hh-8}" text-anchor="middle">${fmtDM(w)}</text>`; });
+  return s+"</svg>"; }
+function bindPpc(p,sv){ const wk=ppcWeek; const sem=()=>{ let s=p.ppc.find(x=>x.semana===wk); if(!s){ s={id:uid(),semana:wk,itens:[]}; p.ppc.push(s); } return s; };
+  $("#pwPrev").onclick=()=>{ ppcWeek=addD(wk,-7); rerender(); }; $("#pwNext").onclick=()=>{ ppcWeek=addD(wk,7); rerender(); }; const t=$("#pwToday"); if(t) t.onclick=()=>{ ppcWeek=mondayOf(today()); rerender(); };
+  $("#pwAdd").onclick=()=>{ const m=modal("Pacote de trabalho",`<label class="f"><span>O que será feito nesta semana</span><input class="i" id="pkD" placeholder="ex.: Alvenaria do pavimento térreo, eixos A a C"></label><div class="fields" style="margin-top:10px"><label class="f"><span>Atividade do cronograma</span><select class="i" id="pkT"><option value="">—</option>${p.tarefas.map(t=>`<option value="${t.id}">${esc(t.nome)}</option>`).join("")}</select></label><label class="f"><span>Responsável</span><input class="i" id="pkR"></label></div>`,
+    [{label:"Cancelar"},{label:"Adicionar",cls:"pri",on:mm=>{ const d=$("#pkD",mm).value.trim(); const tid=$("#pkT",mm).value; if(!d&&!tid){ toast("Descreva o pacote."); return false; } sem().itens.push({id:uid(),taskId:tid,desc:d||p.tarefas.find(x=>x.id===tid).nome,resp:$("#pkR",mm).value,ok:null,causa:""}); sv(); rerender(); }}],"sm"); };
+  $("#pwSug").onclick=()=>{ const sc=schedule(p); const fim=addD(wk,6); const s=sem(); const act=p.tarefas.filter(t=>t._ini<=fim&&t._fim>=wk&&!s.itens.some(i=>i.taskId===t.id)); if(!act.length){ toast("Nenhuma atividade nova programada para esta semana."); return; } act.forEach(t=>s.itens.push({id:uid(),taskId:t.id,desc:t.nome,resp:"",ok:null,causa:""})); sv(); rerender(); toast(`${act.length} pacote(s) sugerido(s). Detalhe o que cabe na semana.`); };
+  $$("tr[data-pi]").forEach(tr=>{ const s=p.ppc.find(x=>x.semana===wk); const it=s.itens.find(i=>i.id===tr.dataset.pi);
+    $$("[data-pf]",tr).forEach(i=>i.onchange=()=>{ it[i.dataset.pf]=i.value; sv(); if(i.dataset.pf==="causa") rerender(); });
+    $$("[data-pok]",tr).forEach(b=>b.onclick=()=>{ const v=b.dataset.pok==="1"; it.ok=it.ok===v?null:v; if(it.ok===false&&!it.causa) it.causa=CAUSAS[0]; sv(); rerender(); });
+    $("[data-pdel]",tr).onclick=()=>{ s.itens=s.itens.filter(x=>x!==it); sv(); rerender(); }; }); }
+
+/* ---------- linha de balanço ---------- */
+function lobCalc(L){ const N=Math.max(1,L.unidades|0); const res=[]; let prev=null;
+  L.servicos.forEach((s,si)=>{ const d=Math.max(1,+s.dur||1), k=Math.max(1,+s.equipes||1), b=Math.max(0,+s.buf||0); const st=[],fi=[];
+    for(let u=0;u<N;u++){ let a=0; if(u>=k) a=Math.max(a,fi[u-k]+1); if(prev) a=Math.max(a,prev.fi[u]+1+b); st[u]=a; fi[u]=a+d-1; }
+    const r={s,st,fi,ini:st[0],fim:Math.max(...fi),ritmo:k/d}; res.push(r); prev=r; }); return {res,N,fim:res.length?Math.max(...res.map(r=>r.fim)):0}; }
+function lobHTML(p,sc){ const L=p.lob; if(!L) return `<div class="empty">A linha de balanço serve para obras com serviços repetidos em várias unidades (casas, apartamentos, pavimentos, blocos). Monte a partir das atividades do cronograma e ajuste a duração por unidade e o número de equipes.<div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" id="lbNew">${I(IC.plus)}Montar linha de balanço</button></div></div>`;
+  const C=lobCalc(L); const pal=["#0D5A85","#F3B738","#1E8A5A","#C0392B","#7B4FB3","#2C8C99","#B26B00","#5B6B78","#D65DB1","#3B7DD8"];
+  return `<div class="card"><div class="fields"><label class="f"><span>Número de unidades</span><input class="i" id="lbN" value="${L.unidades}" inputmode="numeric"></label><label class="f"><span>Nome da unidade</span><input class="i" id="lbU" value="${esc(L.nome)}" placeholder="Casa, apto, pavimento"></label>
+    <div class="kpi"><small>Duração total</small><b>${C.fim+1} dias úteis</b></div><div class="kpi"><small>Término</small><b>${dbr(sc.cal.date(C.fim))}</b></div></div></div>
+  <div class="tw"><table class="t"><thead><tr><th>Serviço</th><th class="n">Dias por ${esc(L.nome.toLowerCase()||"unidade")}</th><th class="n">Equipes</th><th class="n">Pulmão (dias)</th><th class="n">Ritmo (un/dia)</th><th>Início</th><th>Término</th><th></th></tr></thead><tbody>
+  ${C.res.map((r,i)=>`<tr data-ls="${i}"><td><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${pal[i%pal.length]};margin-right:6px"></span><input class="cell" data-lf="nome" value="${esc(r.s.nome)}" style="display:inline-block;width:calc(100% - 20px)" aria-label="Serviço"></td>
+    <td style="width:110px"><input class="cell n" data-lf="dur" value="${r.s.dur}" inputmode="numeric" aria-label="Dias por unidade"></td><td style="width:90px"><input class="cell n" data-lf="equipes" value="${r.s.equipes}" inputmode="numeric" aria-label="Equipes"></td><td style="width:110px"><input class="cell n" data-lf="buf" value="${r.s.buf}" inputmode="numeric" aria-label="Pulmão"></td>
+    <td class="n">${nf(r.ritmo,2)}</td><td>${dbr(sc.cal.date(r.ini))}</td><td>${dbr(sc.cal.date(r.fim))}</td><td style="white-space:nowrap"><button class="btn ghost sm" data-lup="${i}" aria-label="Subir">${I(IC.up)}</button><button class="btn ghost sm" data-ldel="${i}" aria-label="Excluir">${I(IC.trash)}</button></td></tr>`).join("")}</tbody></table></div>
+  <div class="row"><button class="btn" id="lbAdd">${I(IC.plus)}Serviço</button><button class="btn ghost" id="lbReset">Remontar pelo cronograma</button><span class="small muted">Linhas paralelas indicam ritmo equilibrado. Linhas que se aproximam indicam risco de uma equipe esperar pela outra.</span></div>
+  <div class="card"><h3>Linha de balanço</h3>${lobSVG(C,L,sc,pal)}</div>`; }
+function lobSVG(C,L,sc,pal){ const W=900,Hh=Math.max(220,C.N*22+60),pl=60,pr=14,pt=12,pb=28; const T=Math.max(1,C.fim+1); const x=d=>pl+(W-pl-pr)*d/T, y=u=>pt+(Hh-pt-pb)*(1-u/C.N);
+  let s=`<svg class="chart" viewBox="0 0 ${W} ${Hh}" width="100%" role="img" aria-label="Linha de balanço">`; const ys=Math.max(1,Math.ceil(C.N/10)); for(let u=0;u<=C.N;u+=ys) s+=`<line class="grid" x1="${pl}" x2="${W-pr}" y1="${y(u)}" y2="${y(u)}"/><text x="${pl-6}" y="${y(u)+4}" text-anchor="end">${u}</text>`;
+  const step=Math.max(5,Math.round(T/10/5)*5); for(let d=0;d<=T;d+=step) s+=`<text x="${x(d)}" y="${Hh-8}" text-anchor="middle">${fmtDM(sc.cal.date(d))}</text>`;
+  s+=`<text x="10" y="${pt+8}" style="font-size:10px">${esc(L.nome||"Unid.")}</text>`;
+  C.res.forEach((r,i)=>{ const c=pal[i%pal.length]; const a=r.st.map((v,u)=>`${x(v)},${y(u)}`), b=r.fi.map((v,u)=>`${x(v+1)},${y(u+1)}`); const poly=[]; r.st.forEach((v,u)=>{ poly.push(`${x(v)},${y(u)}`, `${x(v)},${y(u+1)}`); }); const back=[]; r.fi.forEach((v,u)=>{ back.push(`${x(v+1)},${y(u)}`, `${x(v+1)},${y(u+1)}`); });
+    s+=`<polygon points="${poly.concat(back.reverse()).join(" ")}" fill="${c}" opacity=".28"><title>${esc(r.s.nome)}</title></polygon><polyline points="${r.st.map((v,u)=>`${x(v)},${y(u+.5)}`).join(" ")}" fill="none" stroke="${c}" stroke-width="2"/>`; });
+  return s+`</svg><div class="row small" style="margin-top:6px">${C.res.map((r,i)=>`<span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${pal[i%pal.length]}"></span> ${esc(r.s.nome)}</span>`).join("")}</div>`; }
+function bindLob(p,sv){ const mk=()=>({unidades:10,nome:"Casa",servicos:p.tarefas.slice(0,8).map(t=>({id:uid(),nome:t.nome,dur:Math.max(1,Math.round(t.dur/10)||2),equipes:1,buf:1}))});
+  const nb=$("#lbNew"); if(nb){ nb.onclick=()=>{ p.lob=mk(); if(!p.lob.servicos.length) p.lob.servicos=[{id:uid(),nome:"Serviço",dur:3,equipes:1,buf:1}]; sv(); rerender(); }; return; }
+  const L=p.lob; $("#lbN").onchange=e=>{ const v=parseInt(e.target.value); if(!(v>0&&v<=500)){ toast("Use de 1 a 500 unidades."); return; } L.unidades=v; sv(); rerender(); }; $("#lbU").onchange=e=>{ L.nome=e.target.value; sv(); rerender(); };
+  $$("tr[data-ls] .cell").forEach(i=>i.onchange=()=>{ const s=L.servicos[+i.closest("tr").dataset.ls]; const f=i.dataset.lf; if(f==="nome") s.nome=i.value; else { const v=parseInt(i.value); if(!(v>=(f==="buf"?0:1))){ toast("Valor inválido."); return; } s[f]=v; } sv(); rerender(); });
+  $("#lbAdd").onclick=()=>{ L.servicos.push({id:uid(),nome:"Novo serviço",dur:2,equipes:1,buf:1}); sv(); rerender(); };
+  $("#lbReset").onclick=async()=>{ if(!(await confirmBox("Remontar a linha de balanço a partir das atividades do cronograma?","Remontar"))) return; p.lob=mk(); sv(); rerender(); };
+  $$("[data-lup]").forEach(b=>b.onclick=()=>{ const i=+b.dataset.lup; if(i>0){ [L.servicos[i-1],L.servicos[i]]=[L.servicos[i],L.servicos[i-1]]; sv(); rerender(); } });
+  $$("[data-ldel]").forEach(b=>b.onclick=()=>{ L.servicos.splice(+b.dataset.ldel,1); sv(); rerender(); }); }
+
+/* ---------- calendário ---------- */
+function calHTML(p,sc){ const y0=+p.inicio.slice(0,4); const nac=[]; for(let y=y0;y<=+sc.fim.slice(0,4);y++) feriadosNac(y).forEach(d=>{ if(d>=p.inicio&&d<=sc.fim) nac.push(d); });
+  return `<div class="grid2"><div class="card"><h3>Dias de trabalho</h3><label class="f" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="clSab" ${p.cal.sabado?"checked":""}><span>Trabalhar aos sábados</span></label><p class="small muted">Os domingos e os feriados nacionais (inclusive a Sexta-feira Santa) já ficam fora do cronograma.</p>
+    <h3 style="margin-top:14px">Feriados nacionais no período</h3><div class="row small">${nac.map(d=>`<span class="pill info">${dbr(d)}</span>`).join("")||'<span class="muted">nenhum</span>'}</div></div>
+  <div class="card"><h3>Feriados municipais e paralisações</h3><p class="small muted" style="margin-top:0">Ex.: aniversário da cidade, Carnaval, recesso de fim de ano.</p><div class="row"><input class="i" type="date" id="clD" style="width:auto"><button class="btn" id="clAdd">${I(IC.plus)}Adicionar</button><button class="btn ghost" id="clRec">Recesso 24/12 a 01/01</button></div>
+    <div class="row small" style="margin-top:10px">${(p.cal.feriados||[]).slice().sort().map(d=>`<span class="pill amb">${dbr(d)} <button class="btn ghost sm" data-crm="${d}" style="padding:0 2px" aria-label="Remover">×</button></span>`).join("")||'<span class="muted">nenhum</span>'}</div></div></div>`; }
+function bindCal(p,sv){ $("#clSab").onchange=e=>{ p.cal.sabado=e.target.checked; sv(); rerender(); };
+  $("#clAdd").onclick=()=>{ const d=$("#clD").value; if(!d){ toast("Escolha a data."); return; } if(!p.cal.feriados.includes(d)) p.cal.feriados.push(d); sv(); rerender(); };
+  $("#clRec").onclick=()=>{ const sc=schedule(p); for(let y=+p.inicio.slice(0,4);y<=+sc.fim.slice(0,4);y++){ for(let d=`${y}-12-24`;d<=`${y+1}-01-01`;d=addD(d,1)) if(!p.cal.feriados.includes(d)) p.cal.feriados.push(d); } sv(); rerender(); toast("Recesso adicionado."); };
+  $$("[data-crm]").forEach(b=>b.onclick=()=>{ p.cal.feriados=p.cal.feriados.filter(x=>x!==b.dataset.crm); sv(); rerender(); }); }
 
 /* ================= Propostas, planejamento, ajustes, roteador ================= */
 /* ---------- valor por extenso ---------- */
@@ -942,42 +1211,6 @@ async function gerarPDF(p,btn){ const o=S.orcs.find(x=>x.id===p.orcId); if(!o) r
   await saveFile(`${p.num}_${safeName(cli.nome||o.nome)}.pdf`,doc.output("blob"));
   }catch(e){ console.error(e); toast("Não consegui gerar o PDF."); } finally{ if(btn) btn.disabled=false; } }
 
-/* ---------- planejamento ---------- */
-function sendToPlan(o){ const k=calcOrc(o); if(!o.itens.length){ toast("O orçamento está vazio."); return; }
-  const prazo=parseInt(String(o.prazo).match(/\d+/)?.[0]||"0")||Math.max(60,Math.min(360,Math.round(k.tot/12000)));
-  let pl=S.plans.find(p=>p.orcId===o.id); const old=pl?Object.fromEntries(pl.tarefas.map(t=>[t.etId,t])):{};
-  let cum=0; const tarefas=o.etapas.filter(e=>(k.et[e.id]||{}).n).map(e=>{ const v=k.et[e.id].tot, sh=k.tot?v/k.tot:0; let ini=Math.round(prazo*cum*0.85), dur=Math.max(5,Math.round(prazo*(sh+0.15))); if(ini+dur>prazo) dur=Math.max(5,prazo-ini); cum+=sh;
-    const t=old[e.id]; return {id:t?t.id:uid(),etId:e.id,nome:e.nome,valor:v,ini:t?t.ini:ini,dur:t?t.dur:dur}; });
-  if(pl){ pl.tarefas=tarefas; pl.nome=o.nome; pl.atualizado=Date.now(); } else { pl={id:uid(),orcId:o.id,nome:o.nome,inicio:today(),tarefas,criado:Date.now(),atualizado:Date.now()}; S.plans.push(pl); }
-  o.planId=pl.id; save("plans"); touch(o); toast(old&&Object.keys(old).length?"Planejamento atualizado com os valores do orçamento.":"Orçamento enviado para o planejamento."); go("plano-"+pl.id); }
-function viewPlanos(){ return `<div class="head"><div><div class="eyebrow">Planejamento</div><h1>Planejamento de obras</h1></div></div>
-  <div class="notice info">Esta primeira versão recebe os orçamentos e monta o cronograma por etapa e a curva S. O módulo completo de planejamento (RDO, PPC, linha de balanço e acompanhamento do avanço) vem na próxima versão.</div>
-  ${S.plans.length?`<div class="tw"><table class="t"><thead><tr><th>Obra</th><th>Início</th><th class="n">Etapas</th><th class="n">Duração</th><th class="n">Valor</th></tr></thead><tbody>${S.plans.map(p=>{ const end=Math.max(0,...p.tarefas.map(t=>t.ini+t.dur)); return `<tr class="click" data-pl="${p.id}"><td><b>${esc(p.nome)}</b></td><td>${dbr(p.inicio)}</td><td class="n">${p.tarefas.length}</td><td class="n">${end} dias</td><td class="n">${brl(p.tarefas.reduce((a,t)=>a+t.valor,0))}</td></tr>`; }).join("")}</tbody></table></div>`:`<div class="empty">Abra um orçamento e toque em “Enviar para o planejamento”.</div>`}`; }
-function bindPlanos(){ $$("[data-pl]").forEach(r=>r.onclick=()=>go("plano-"+r.dataset.pl)); }
-const addD=(s,n)=>{ const d=new Date(s+"T12:00:00"); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); };
-const diffD=(a,b)=>Math.round((new Date(b+"T12:00:00")-new Date(a+"T12:00:00"))/864e5);
-let PL=null;
-function viewPlano(id){ const p=S.plans.find(x=>x.id===id); if(!p) return `<div class="empty">Planejamento não encontrado.</div>`; PL=p; const T=p.tarefas.reduce((a,t)=>a+t.valor,0); const end=Math.max(1,...p.tarefas.map(t=>t.ini+t.dur));
-  return `<div class="head"><div><div class="eyebrow"><a href="#planejamento">Planejamento</a></div><h1>${esc(p.nome)}</h1></div><div class="row"><label class="f" style="flex-direction:row;align-items:center;gap:8px"><span>Início da obra</span><input class="i" type="date" id="plIni" value="${esc(p.inicio)}" style="width:auto"></label><a class="btn" href="#orc-${p.orcId}">Ver orçamento</a></div></div>
-  <div class="grid4"><div class="kpi"><small>Valor</small><b>${brl(T)}</b></div><div class="kpi"><small>Duração</small><b>${end} dias</b></div><div class="kpi"><small>Término previsto</small><b>${dbr(addD(p.inicio,end))}</b></div><div class="kpi"><small>Etapas</small><b>${p.tarefas.length}</b></div></div>
-  <div class="tw"><table class="t"><thead><tr><th>EAP</th><th>Etapa</th><th class="n">Valor</th><th class="n">Peso</th><th>Início</th><th class="n">Duração (dias)</th><th>Término</th></tr></thead><tbody>${p.tarefas.map((t,i)=>`<tr><td class="mono">${i+1}</td><td>${esc(t.nome)}</td><td class="n">${brl(t.valor)}</td><td class="n">${T?pct(t.valor/T,1):"—"}</td><td style="width:150px"><input class="cell" type="date" data-ti="${i}" value="${addD(p.inicio,t.ini)}" aria-label="Início de ${esc(t.nome)}"></td><td style="width:110px"><input class="cell n" data-td="${i}" value="${t.dur}" inputmode="numeric" aria-label="Duração de ${esc(t.nome)}"></td><td>${dbr(addD(p.inicio,t.ini+t.dur))}</td></tr>`).join("")}</tbody></table></div>
-  <div class="card"><h3>Cronograma</h3>${ganttSVG(p,end)}</div><div class="card"><h3>Curva S prevista (físico-financeira)</h3>${curvaS(p,end,T)}</div>`; }
-function ganttSVG(p,end){ const W=900,rh=26,pl=200,top=26,Hh=top+p.tarefas.length*rh+8; const x=d=>pl+(W-pl-12)*d/end; let s=`<div style="overflow-x:auto"><svg class="chart gantt" viewBox="0 0 ${W} ${Hh}" style="min-width:640px" width="100%" role="img" aria-label="Cronograma de barras">`;
-  const step=end>240?30:end>90?14:7; for(let d=0;d<=end;d+=step){ s+=`<line class="grid" x1="${x(d)}" x2="${x(d)}" y1="${top-6}" y2="${Hh}"/><text x="${x(d)}" y="${top-10}" text-anchor="middle">${dbr(addD(p.inicio,d)).slice(0,5)}</text>`; }
-  p.tarefas.forEach((t,i)=>{ const y=top+i*rh; s+=`<text class="lbl" x="6" y="${y+16}">${esc((i+1)+". "+t.nome).slice(0,30)}</text><rect x="${x(t.ini)}" y="${y+5}" width="${Math.max(3,x(t.ini+t.dur)-x(t.ini))}" height="${rh-10}" rx="3" fill="var(--brand2)"><title>${esc(t.nome)}: ${t.dur} dias</title></rect>`; });
-  return s+"</svg></div>"; }
-function curvaS(p,end,T){ if(!T) return ""; const days=new Array(end+1).fill(0); p.tarefas.forEach(t=>{ const per=t.valor/Math.max(1,t.dur); for(let d=t.ini;d<t.ini+t.dur&&d<=end;d++) days[d]+=per; });
-  const pts=[]; let acc=0; for(let d=0;d<=end;d++){ acc+=days[d]; if(d%7===0||d===end) pts.push([d,acc/T]); }
-  const W=900,Hh=230,pl=46,pr=16,pt=12,pb=26; const x=d=>pl+(W-pl-pr)*d/end, y=v=>pt+(Hh-pt-pb)*(1-v);
-  let s=`<svg class="chart" viewBox="0 0 ${W} ${Hh}" width="100%" role="img" aria-label="Curva S prevista">`; [0,.25,.5,.75,1].forEach(v=>s+=`<line class="grid" x1="${pl}" x2="${W-pr}" y1="${y(v)}" y2="${y(v)}"/><text x="${pl-6}" y="${y(v)+4}" text-anchor="end">${v*100}%</text>`);
-  const step=end>240?30:end>90?14:7; for(let d=0;d<=end;d+=step) s+=`<text x="${x(d)}" y="${Hh-8}" text-anchor="middle">${dbr(addD(p.inicio,d)).slice(0,5)}</text>`;
-  s+=`<path d="M${x(0)},${y(0)} ${pts.map(([d,v])=>`L${x(d)},${y(v)}`).join(" ")} L${x(end)},${y(0)} Z" fill="var(--brand2)" opacity=".12"/><polyline fill="none" stroke="var(--brand2)" stroke-width="2.4" points="${pts.map(([d,v])=>`${x(d)},${y(v)}`).join(" ")}"/>`;
-  const mid=pts.find(([,v])=>v>=.5); if(mid) s+=`<circle cx="${x(mid[0])}" cy="${y(mid[1])}" r="4" fill="var(--amber)"/><text x="${x(mid[0])+8}" y="${y(mid[1])+4}" style="fill:var(--ink)">50% em ${dbr(addD(p.inicio,mid[0]))}</text>`;
-  return s+"</svg>"; }
-function bindPlano(){ const p=PL; if(!p) return; $("#plIni").onchange=e=>{ p.inicio=e.target.value||today(); save("plans"); rerender(); };
-  $$("[data-ti]").forEach(i=>i.onchange=()=>{ const t=p.tarefas[+i.dataset.ti]; t.ini=Math.max(0,diffD(p.inicio,i.value)); save("plans"); rerender(); });
-  $$("[data-td]").forEach(i=>i.onchange=()=>{ const v=parseInt(i.value); if(!(v>0)){ toast("Duração em dias, maior que zero."); return; } p.tarefas[+i.dataset.td].dur=v; save("plans"); rerender(); }); }
-
 /* ---------- ajustes ---------- */
 function viewAjustes(){ const c=S.cfg; const f=(id,l,v,ph="")=>`<label class="f"><span>${l}</span><input class="i" id="${id}" value="${esc(v||"")}" placeholder="${esc(ph)}"></label>`;
   return `<div class="head"><div><div class="eyebrow">Configurações</div><h1>Ajustes</h1></div></div>
@@ -986,7 +1219,7 @@ function viewAjustes(){ const c=S.cfg; const f=(id,l,v,ph="")=>`<label class="f"
   <div class="card"><h3>Responsável técnico</h3><div class="fields">${f("cR","Nome",c.resp)}${f("cTi","Título",c.titulo,"Engenheiro civil")}${f("cCr","Registro profissional",c.crea,"CREA-SC 000000-0")}</div>
     <p class="small muted" style="margin:10px 0 6px">Assinatura usada nas propostas</p><canvas class="sig" id="cSig"></canvas><div class="row" style="margin-top:6px"><button class="btn sm" id="cSigC">Limpar</button><button class="btn sm pri" id="cSigS">Salvar assinatura</button></div></div></div>
   <div class="grid2"><div class="card"><h3>Seus dados</h3><p class="small">Tudo fica guardado neste aparelho e neste navegador. Faça backup de vez em quando e use o arquivo para levar os dados a outro aparelho.</p>
-    <div class="row"><button class="btn" id="bkOut">${I(IC.download)}Fazer backup</button><button class="btn" id="bkIn">${I(IC.upload)}Restaurar backup</button></div><label class="f" style="flex-direction:row;align-items:center;gap:6px;margin-top:8px"><input type="checkbox" id="bkBig"><span>Incluir as bases SINAPI/SICRO importadas (arquivo maior)</span></label></div>
+    <div class="row"><button class="btn" id="bkOut">${I(IC.download)}Fazer backup</button><button class="btn" id="bkIn">${I(IC.upload)}Restaurar backup</button></div><label class="f" style="flex-direction:row;align-items:center;gap:6px;margin-top:8px"><input type="checkbox" id="bkBig"><span>Incluir as bases SINAPI/SICRO importadas (arquivo maior)</span></label><label class="f" style="flex-direction:row;align-items:center;gap:6px;margin-top:4px"><input type="checkbox" id="bkFot" checked><span>Incluir as fotos dos RDOs</span></label></div>
   <div class="card"><h3>Aparência</h3><div class="row">${[["auto","Automática"],["light","Clara"],["dark","Escura"]].map(([v,l])=>`<button class="btn ${(c.tema||"auto")===v?"pri":""}" data-tema="${v}">${l}</button>`).join("")}</div>
     <h3 style="margin-top:16px">Equipe e nuvem</h3><p class="small muted">Nesta versão os dados ficam no aparelho. O app já está preparado para ligar uma base na nuvem (Supabase, plano gratuito) com login da equipe.</p>
     <button class="btn danger sm" id="rsAll" style="margin-top:6px">Apagar todos os dados deste aparelho</button></div></div>`; }
@@ -998,10 +1231,11 @@ function bindAjustes(){ const c=S.cfg; const m={cE:"empresa",cC:"cnpj",cT:"tel",
   const lr=$("#cLogoR"); if(lr) lr.onclick=()=>{ c.logo=""; save("cfg"); rerender(); };
   $$("[data-tema]").forEach(b=>b.onclick=()=>{ c.tema=b.dataset.tema; save("cfg"); applyTheme(); rerender(); });
   $("#bkOut").onclick=async()=>{ const big=$("#bkBig").checked; const data={}; KV.forEach(k=>data[k]=S[k]); const bases=[]; for(const m of S.basesMeta){ if(big||m.fonte==="PROPRIA"){ const b=await loadBase(m.id); if(b) bases.push(b); } }
-    await saveFile(`tex-orcamentos-backup-${today()}.json`,new Blob([JSON.stringify({app:"tex-orcamentos",v:1,em:new Date().toISOString(),data,bases})],{type:"application/json"})); };
+    const blobs={}; if($("#bkFot").checked){ for(const p of S.plans) for(const r of (p.rdos||[])) for(const k of (r.fotos||[])){ const v=await Store.get("blobs",k); if(v) blobs[k]=v; } }
+    await saveFile(`tex-orcamentos-backup-${today()}.json`,new Blob([JSON.stringify({app:"tex-orcamentos",v:2,em:new Date().toISOString(),data,bases,blobs})],{type:"application/json"})); };
   $("#bkIn").onclick=async()=>{ const f=await pickFile(".json,application/json"); if(!f) return; let j; try{ j=JSON.parse(await f.text()); }catch(e){ toast("Arquivo de backup inválido."); return; } if(j.app!=="tex-orcamentos"){ toast("Este arquivo não é um backup do TEX Orçamentos."); return; }
     if(!(await confirmBox(`Restaurar o backup de ${dbr(j.em)}? Os dados atuais deste aparelho serão substituídos.`,"Restaurar"))) return;
-    for(const k of KV) if(j.data[k]!==undefined){ S[k]=j.data[k]; await saveNow(k); } for(const b of (j.bases||[])) await saveBase(b);
+    for(const k of KV) if(j.data[k]!==undefined){ S[k]=j.data[k]; await saveNow(k); } for(const b of (j.bases||[])) await saveBase(b); for(const [k,v] of Object.entries(j.blobs||{})) await Store.set("blobs",k,v);
     for(const m of S.basesMeta) if(m.ativo) await loadBase(m.id); toast("Backup restaurado."); go("painel"); };
   $("#rsAll").onclick=async()=>{ if(!(await confirmBox("Apagar orçamentos, cadastros, propostas e bases deste aparelho? Isso não pode ser desfeito.","Apagar tudo"))) return;
     for(const k of KV) await Store.del("kv",k); for(const m of S.basesMeta) await Store.del("bases",m.id); location.hash=""; location.reload(); }; }
