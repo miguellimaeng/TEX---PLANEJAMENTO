@@ -1,0 +1,9 @@
+OBRA360° — EDIÇÃO PARA COMPUTADOR
+
+1. Extraia esta pasta para um lugar fixo, por exemplo Documentos\Obra360.
+2. Clique com o botão direito em "Obra360.html" > Abrir com > Google Chrome (ou Microsoft Edge).
+3. Preencha a tela de boas-vindas e aceite o termo de licença.
+4. Leia o "Guia de instalação e uso" para importar a SINAPI do seu estado e fazer o primeiro orçamento.
+
+Importante: use sempre o mesmo navegador e faça backup toda semana (Ajustes > Fazer backup).
+O uso deste programa está sujeito ao "Termo de licença de uso" incluído nesta pasta.
